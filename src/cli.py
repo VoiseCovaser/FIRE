@@ -116,6 +116,20 @@ PROFILES = {
             "fund_fees": 0.0015,
         },
     },
+    "spain_fit": {
+        "name": "Spain FIT (Fondos Indexados Traspasables)",
+        "description": "Gasto €40k/año: optimizado para FITs españoles (0% retenida, 19% al vender)",
+        "defaults": {
+            "annual_spending": 40_000,
+            "safe_withdrawal_rate": 0.04,
+            "expected_return": 0.065,
+            "inflation_rate": 0.02,
+            "tax_rate_on_gains": 0.19,  # España: 19% plusvalías
+            "tax_rate_on_dividends": 0.00,  # FITs acumulativos: 0% retenida anual
+            "tax_rate_on_interest": 0.45,
+            "fund_fees": 0.0004,  # FITs muy baratos (Vanguard, iShares típicamente 0.03-0.05%)
+        },
+    },
 }
 
 MOTIVATIONAL_MESSAGES = {
@@ -668,6 +682,29 @@ PATRIMONIO NETO (Net Worth):           €{net_worth:>15,.0f}
     return config
 
 
+def show_fit_context():
+    """Muestra información sobre Fondos Indexados Traspasables españoles."""
+    print("""
+┌──────────────────────────────────────────────────────────────┐
+│ 🇪🇸 FONDOS INDEXADOS TRASPASABLES (FITs) - ESPAÑA          │
+├──────────────────────────────────────────────────────────────┤
+│ ✅ 0% RETENCIÓN FISCAL ANUAL (acumulativos)                 │
+│ ✅ 0% IMPUESTO AL TRASPASAR entre brokers                   │
+│ ✅ 19% solo al vender (plusvalías en España)                │
+│ ✅ Comisiones: 0.03-0.05% TER (muy bajos)                   │
+│                                                              │
+│ POPULARES: VWRT (Vanguard), OMAM (iShares), NWD (NN)       │
+│                                                              │
+│ COMPARATIVA 30 AÑOS (100€ @ 6.5%):                         │
+│   FIT VWRT      → 647€                                      │
+│   UCITS acc     → 642€                                      │
+│   Distributor   → 560€ (impuesto anual + comisión alta)    │
+│                                                              │
+│ IDEAL PARA FIRE ESPAÑOL: eficiencia fiscal + liquidez local│
+└──────────────────────────────────────────────────────────────┘
+""")
+
+
 def show_dividend_tax_context(profile_key: str) -> None:
     """Show explanation for how dividends are taxed in each profile."""
     if profile_key == "ucits":
@@ -688,6 +725,8 @@ def show_dividend_tax_context(profile_key: str) -> None:
 │ ✅ Tu cartera target ES 5-8% MÁS BAJA (menos capital)      │
 └──────────────────────────────────────────────────────────────┘
 """)
+    elif profile_key == "spain_fit":
+        show_fit_context()
     else:
         profile = PROFILES[profile_key]
         defaults = profile["defaults"]

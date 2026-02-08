@@ -23,7 +23,7 @@
 
 ## 🚀 Features Principales
 
-### 5 Variantes de FIRE Preconfiguradas
+### 6 Variantes de FIRE Preconfiguradas
 
 | Perfil | Gasto Anual | Descripción |
 |--------|-------------|------------|
@@ -32,6 +32,7 @@
 | **Coast FIRE** | €40k | Acumula ahora, deja crecer sin aportes después |
 | **Barista FIRE** | €50k | €15k código part-time + €35k portfolio |
 | **UCITS Tax Efficient** | €45k | Optimizado para fondos UCITS acumulativos |
+| **Spain FIT** | €40k | 🇪🇸 Fondos Indexados Traspasables españoles (0% retenida anual) |
 
 ### ✨ Funcionalidades Avanzadas
 
@@ -79,11 +80,12 @@ Elige tu Perfil FIRE
   3) Coast FIRE           — Gasto €40k/año: acumula ahora, deja crecer sin aportes después
   4) Barista FIRE         — Gasto €50k/año: €15k trabajo part-time + €35k portfolio (4% SWR)
   5) UCITS Tax Efficient  — Gasto €45k/año: optimizado para UCITS y cuentas múltiples
-  6) Entrada personalizada (Custom)
-  7) Ver ejemplo JSON (para usar con API)
+  6) Spain FIT            — Gasto €40k/año: Fondos Indexados Traspasables españoles
+  7) Entrada personalizada (Custom)
+  8) Ver ejemplo JSON (para usar con API)
   0) Salir
 
-Elige (0-7): 4
+Elige (0-8): 4
 ```
 
 Luego personaliza los parámetros que desees (o acepta los defaults) y obtén tu análisis completo.
@@ -176,6 +178,53 @@ Ingresos esperados:
 €100 en UCITS acumulativo  @ 7%  =  €761
 vs.
 €100 en fondo distribuidor @ 7%  =  €650   (€111 menos!)
+```
+
+---
+
+### 🇪🇸 Spain FIT — Fondos Indexados Traspasables (€40k anuales)
+
+**Ideal para:** Inversores en España que quieren **máxima eficiencia fiscal con liquidez local y comisiones ultra-bajas**.
+
+**¿Por qué FITs?**
+
+Los Fondos Indexados Traspasables son **extremadamente populares en comunidades FIRE españolas** (r/SpainFIRE, Forocoches) porque ofrecen:
+
+| Ventaja | FIT | UCITS Acc | Fondo Distribuidor |
+|---------|-----|-----------|-------------------|
+| **Impuesto Anual** | 0% (acumulativos) | 0% | 30% (retenida) |
+| **Impuesto al Vender** | 19% (plusvalías ES) | 15-19% | 0% (ya pagado) |
+| **Comisión TER** | **0.03-0.05%** | 0.20-0.35% | 0.30-0.50% |
+| **Traspasos (cambio broker)** | **0% (libre)** | Taxado | Taxado |
+| **Liquidez** | Excelente (brokers ES) | Buena | Buena |
+
+**Ganancia a 30 años (100€ @ 6.5% neto):**
+```
+FIT VWRT (Vanguard)    → €647  ✅ Comisión ultra-baja (0.04%)
+UCITS Acumulativo      → €642     Comisión más alta (0.22%)
+Distribuidor           → €560     Impuesto anual + comisión (5-8% menos)
+```
+
+**FITs Populares Recomendados:**
+
+- **VWRT** (Vanguard World Index Traspasable) - 0.04% TER - World index
+- **OMAM** (iShares Core MSCI World) - 0.03% TER - World index  
+- **NWD** (NN World Equity Index Fund) - 0.06% TER - World index
+
+**Ventajas Prácticas:**
+- ✅ Puedes cambiar de broker **sin fiscalidad** (traspasos gratis)
+- ✅ Ahorras €1-2k en 30 años vs UCITS (mejor comisión)
+- ✅ Disponibles en **casi todos los brokers españoles** (Degiro, IB, Selfbank)
+- ✅ Acumulativos: **reinversión automática** sin impuesto anual
+- ✅ 19% plusvalías = **mismo que Spain personal cuenta corriente** (eficiencia fiscal local)
+
+**Configuración en el Calculador:**
+```python
+annual_spending: €40k
+tax_on_gains: 19%      # Plusvalías (España)
+tax_on_dividends: 0%   # Acumulativos (sin retenida)
+fund_fees: 0.0004      # 0.04% TER (similar VWRT Vanguard)
+expected_return: 6.5%  # Después de comisión
 ```
 
 ---
