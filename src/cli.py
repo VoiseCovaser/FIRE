@@ -39,6 +39,9 @@ WELCOME_MESSAGE = """
 ║                                                                            ║
 ║  Todas optimizadas para fiscalidad EUR/UCITS.                             ║
 ║  💡 Presiona 0 en el menú principal para salir.                           ║
+║                                                                            ║
+║  ☕ Si esta herramienta te ayuda, considera invitarme a un café:           ║
+║     https://buymeacoffee.com/pishu                                         ║
 ╚════════════════════════════════════════════════════════════════════════════╝
 """
 
@@ -1981,6 +1984,8 @@ def main():
                 print("\n" + "=" * 80)
                 print("  ¡Gracias por usar la Calculadora FIRE! 🚀")
                 print("  Recuerda: la consistencia y la paciencia son tus mayores aliados.")
+                print("\n  Si esta herramienta te ha sido útil, considera apoyar el desarrollo:")
+                print("  ☕ https://buymeacoffee.com/pishu")
                 print("=" * 80 + "\n")
                 break
         else:
@@ -2016,6 +2021,8 @@ def main():
                             print("\n" + "=" * 80)
                             print("  ¡Gracias por usar la Calculadora FIRE! 🚀")
                             print("  Recuerda: la consistencia y la paciencia son tus mayores aliados.")
+                            print("\n  Si esta herramienta te ha sido útil, considera apoyar el desarrollo:")
+                            print("  ☕ https://buymeacoffee.com/pishu")
                             print("=" * 80 + "\n")
                             return
                         break  # Back to main profile menu
@@ -2030,6 +2037,8 @@ def main():
                 print("\n" + "=" * 80)
                 print("  ¡Gracias por usar la Calculadora FIRE! 🚀")
                 print("  Recuerda: la consistencia y la paciencia son tus mayores aliados.")
+                print("\n  Si esta herramienta te ha sido útil, considera apoyar el desarrollo:")
+                print("  ☕ https://buymeacoffee.com/pishu")
                 print("=" * 80 + "\n")
                 break
 

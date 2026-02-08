@@ -268,5 +268,23 @@ Your FIRE Calculator is now:
 
 ---
 
+## ☕ Apoya el Desarrollo
+
+Si esta calculadora FIRE te ayuda en tu camino hacia la independencia financiera, 
+considera apoyar el proyecto:
+
+**[☕ Invítame a un Café - https://buymeacoffee.com/pishu](https://buymeacoffee.com/pishu)**
+
+Tu apoyo ayuda a:
+- Mantener la herramienta actualizada
+- Agregar nuevas características (PDF export, gráficos, etc.)
+- Expandir soporte a más países
+- Mejorar documentación y educación FIRE
+
+Cada contribución, sin importar el tamaño, es una muestra de apoyo 
+que motiva a seguir desarrollando esta herramienta para la comunidad. ❤️
+
+---
+
 *Documentación consolidada el 8 de febrero, 2026*  
 *Estado: ✅ Producción — Listo para compartir*

@@ -264,4 +264,19 @@ FIRE/
 
 ---
 
+## ☕ Apoya el Desarrollo
+
+Si esta herramienta te ayuda en tu camino hacia la libertad financiera, 
+considera invitarme a un café para apoyar el desarrollo continuo:
+
+**[☕ Invítame a un Café](https://buymeacoffee.com/pishu)**
+
+Tu apoyo permite:
+- Mantener la herramienta actualizada
+- Agregar nuevas características
+- Mejorar la documentación
+- Expandir soporte a más países
+
+---
+
 **¡Bienvenido a FIRE Calculator! Planifica tu libertad financiera. 🚀**

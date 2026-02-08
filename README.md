@@ -4,6 +4,8 @@
 > 
 > Calcula cuándo podrás retirarte con fondos UCITS, fiscalidad EUR, y análisis profesional.
 
+**☕ Si esta herramienta te ayuda a planificar tu libertad financiera, considera [invitarme a un café](https://buymeacoffee.com/pishu) para apoyar el desarrollo.**
+
 ---
 
 ## 📌 Tabla de Contenidos
@@ -557,6 +559,19 @@ FIRE/
 ### Contribuciones
 Fork → Branch → Commit → Pull Request
 
+### ☕ Apoyo al Desarrollo
+
+Si esta calculadora te ha sido útil en tu viaje FIRE, considera apoyar su desarrollo
+con una pequeña donación:
+
+**[☕ Invítame a un Café](https://buymeacoffee.com/pishu)**
+
+Tu apoyo ayuda a:
+- Mantener la herramienta actualizada
+- Agregar nuevas características
+- Expandir soporte a más países
+- Mejorar la documentación
+
 ---
 
 ## 📜 Licencia
@@ -592,3 +607,9 @@ MIT License — Libre para uso personal y comercial
 ---
 
 *¿Listo para planificar tu libertad financiera? Ejecuta `python3 src/cli.py` ahora.* 🚀
+
+**Si te ha gustado este proyecto, por favor considera:**
+- ⭐ Dar una estrella en GitHub
+- 🔀 Hacer un fork para contribuir
+- ☕ [Apoyar el desarrollo](https://buymeacoffee.com/pishu)
+- 📢 Compartir con otros inversores FIRE

@@ -282,3 +282,9 @@ Al contribuir, aceptas que tu código será bajo la licencia MIT (o lo que espec
 ---
 
 **¡Gracias por ayudar a hacer de FIRE Calculator una herramienta mejor! 🙌**
+
+## ☕ Apoyo al Proyecto
+
+Si valoras este proyecto y te gustaría apoyar su desarrollo, 
+[considera invitarme a un café](https://buymeacoffee.com/pishu). 
+Tu apoyo motiva a continuar mejorando la calculadora para la comunidad FIRE. ❤️
