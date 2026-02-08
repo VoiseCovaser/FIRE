@@ -40,7 +40,7 @@ The source code is available on GitHub: [robermad1986/FIRE](https://github.com/r
 
 - **💰 Tax-Aware Targeting** — Calcula objetivo BRUTO considerando impuestos sobre plusvalías
 - **📊 Proyecciones de 10+ años** — Visualiza crecimiento de tu portafolio
-- **🎲 Monte Carlo Analysis** — 1,000 simulaciones → probabilidad de éxito realista
+- **🎲 Monte Carlo Analysis** — 10,000 simulaciones → probabilidad de éxito realista
 - **🏠 Balance Completo** — Bienes raíces, hipotecas, deudas personales
 - **📈 KPIs Profesionales** — FIRE Number, Net Worth, Burning Rate, Savings Rate
 - **💵 Fiscalidad EUR/UCITS** — Impuestos sobre plusvalías, dividendos, intereses
@@ -292,7 +292,7 @@ expected_return: 6.5%  # Después de comisión
   • Total efectivo: €36,000
   • Tasa de ahorro: 64.3%
 
-🎲 MONTE CARLO (1,000 simulaciones):
+🎲 MONTE CARLO (10,000 simulaciones):
   ✅ PROBABILIDAD DE ÉXITO: 87.3%
   
   📊 ESCENARIOS EN 25 AÑOS:
@@ -637,7 +637,7 @@ MIT License — Libre para uso personal y comercial
 - ✅ 5 perfiles FIRE preconfigurados
 - ✅ Parámetros personalizables con contextos explicativos
 - ✅ Datos inmobiliarios completos (net worth)
-- ✅ Monte Carlo con 1,000 simulaciones
+- ✅ Monte Carlo con 10,000 simulaciones
 - ✅ KPIs profesionales (FIRE Number, Burning Rate, Savings Rate, etc.)
 - ✅ Proyecciones a 10+ años
 - ✅ Suite de testing completa (30+ tests)

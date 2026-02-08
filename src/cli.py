@@ -1328,7 +1328,7 @@ def get_motivational_message(config: Dict[str, Any], years_to_fire: Optional[int
 # MONTE CARLO & KPI FUNCTIONS FOR ADVANCED REPORTING
 # ============================================================================
 
-def simulate_monte_carlo(config: Dict[str, Any], simulations: int = 1000) -> Dict[str, Any]:
+def simulate_monte_carlo(config: Dict[str, Any], simulations: int = 10000) -> Dict[str, Any]:
     """
     Run Monte Carlo simulation to estimate probability of success.
     
@@ -1594,10 +1594,10 @@ def show_results(config: Dict[str, Any]):
     print("║              🎲 ANÁLISIS DE MONTECARLO (Probabilidad de Éxito)            ║")
     print("╚════════════════════════════════════════════════════════════════════════════╝\n")
     
-    print("  Simulando 1,000 escenarios con retornos variable ({:.1f}% ± 15% volatividad)".format(config['expected_return']*100))
+    print("  Simulando 10,000 escenarios con retornos variable ({:.1f}% ± 15% volatividad)".format(config['expected_return']*100))
     print("  Horizonte: {} años | Objetivo: €{:,.0f}\n".format(config.get('years_horizon', 25), target))
     
-    mc_results = simulate_monte_carlo(config, simulations=1000)
+    mc_results = simulate_monte_carlo(config, simulations=10000)
     
     print(f"  ✅ PROBABILIDAD DE ÉXITO:                {mc_results['success_rate']:>14.1f}%")
     print(f"     (Probabilidad de alcanzar €{target:,.0f} en {config.get('years_horizon', 25)} años)\n")
