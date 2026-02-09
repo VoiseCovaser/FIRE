@@ -314,18 +314,18 @@ def generate_market_scenario_message(base_return: float, volatility: float) -> s
     """
     Generate message about market assumptions and risk.
     """
-    if volatility >= 20:
+    if volatility >= 0.20:
         return (
             f"⚡ Portafolio volátil ({volatility*100:.0f}% anual). Espera oscilaciones de ±30% en años difíciles. "
             f"Esto es normal en carteras con 70%+ acciones. Si te despiertas sudando por caídas del 20%, "
             f"reduce volatilidad asignando más a bonos/renta fija."
         )
-    elif volatility >= 15:
+    elif volatility >= 0.15:
         return (
             f"📊 Volatilidad moderada-alta ({volatility*100:.0f}%). Tu cartera tiene exposición accionaria "
             f"importante (~60%). Buena para el largo plazo, puede causar ansiedad en crisis."
         )
-    elif volatility >= 10:
+    elif volatility >= 0.10:
         return (
             f"☘️ Volatilidad moderada ({volatility*100:.0f}%). Balance equilibrado entre "
             f"crecimiento y estabilidad. Duerme bien, tu cartera está diversificada."
