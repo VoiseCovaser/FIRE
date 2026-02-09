@@ -1139,7 +1139,7 @@ def render_export_options(simulation_results: Dict, params: Dict) -> None:
         
         with col_coffee:
             st.markdown(
-                "<a href='https://buymeacoffee.com' target='_blank' style='display: inline-block; padding: 10px 20px; "
+                "<a href='https://buymeacoffee.com/pishu' target='_blank' style='display: inline-block; padding: 10px 20px; "
                 "background-color: #FFDD00; color: #222; text-decoration: none; border-radius: 5px; font-weight: bold;'>"
                 "☕ Apóyame"
                 "</a>",
@@ -1152,7 +1152,7 @@ def render_export_options(simulation_results: Dict, params: Dict) -> None:
         "<p>❤️ <strong>¿Te ha sido útil esta herramienta?</strong></p>"
         "<p>Esta calculadora es gratuita, sin publicidad, y siempre lo será. "
         "Si deseas apoyar el desarrollo y mantener la fiscalidad española actualizada, "
-        "<a href='https://buymeacoffee.com' target='_blank' style='color: #FF6B6B; font-weight: bold;'>"
+        "<a href='https://buymeacoffee.com/pishu' target='_blank' style='color: #FF6B6B; font-weight: bold;'>"
         "invítame a un café ☕</a></p>"
         "</div>",
         unsafe_allow_html=True
