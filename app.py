@@ -876,7 +876,7 @@ def render_main_chart(simulation_results: Dict, params: Dict) -> None:
         yaxis=dict(tickformat=",.0f"),
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     
     # Dynamic chart insights
     with st.expander("💡 Entender tu Cono de Incertidumbre", expanded=False):
@@ -921,7 +921,7 @@ def render_success_distribution_chart(simulation_results: Dict, params: Dict) ->
         showlegend=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     
     # Dynamic success distribution insights
     success_final = simulation_results["success_rate_final"]
@@ -1031,7 +1031,7 @@ def render_sensitivity_analysis(params: Dict) -> None:
         yaxis_title="Inflación esperada",
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Dynamic sensitivity insights  
     sensitivity_col1, sensitivity_col2 = st.columns(2)
