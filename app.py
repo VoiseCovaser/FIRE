@@ -638,6 +638,14 @@ def render_sidebar() -> Dict:
         help="Aplicar tratamiento fiscal específico",
     )
 
+    # Tax optimization context for Spanish users
+    if regimen_fiscal == "España - Fondos de Inversión":
+        st.sidebar.info(
+            "⚖️ **Ventaja FIRE en España:** La Ley de Diferimiento permite traspasos exentos entre fondos "
+            "sin tributación, diferiendo impuestos hasta el reembolso final. Esta calculadora integra ese "
+            "beneficio. Estrategias americanas no lo consideran."
+        )
+
     include_optimización = st.sidebar.checkbox(
         "Incluir optimización de traspasos entre fondos",
         value=False,
@@ -1006,18 +1014,25 @@ def render_sensitivity_analysis(params: Dict) -> None:
         columns=[f"{ret:+.1f}%" for ret in return_offsets],
     )
 
-    # Render as heatmap
+    # Render as heatmap with improved color scaling (Z-score normalization for better contrast)
+    # Normalize matrix to [0, 1] for better color sensitivity
+    z_min = sensitivity_matrix.min()
+    z_max = sensitivity_matrix.max()
+    z_normalized = (sensitivity_matrix - z_min) / (z_max - z_min) if z_max > z_min else sensitivity_matrix
+    
     fig = go.Figure(
         data=go.Heatmap(
             z=sensitivity_matrix,
             x=[f"Renta {ret:+.0f}pp" for ret in return_offsets],
             y=[f"Inflación {inf:+.0f}pp" for inf in inflation_offsets],
             colorscale=[
-                [0, "rgb(46, 204, 113)"],  # Green < 15 years
+                [0, "rgb(46, 204, 113)"],  # Green
                 [0.5, "rgb(243, 156, 18)"],  # Orange
                 [1, "rgb(231, 76, 60)"],  # Red
             ],
-            text=sensitivity_matrix.astype(int),
+            zmin=z_min,
+            zmax=z_max,
+            text=np.round(sensitivity_matrix, 1),  # Display with 1 decimal for more granularity
             texttemplate="%{text} años",
             textfont={"size": 10},
             colorbar=dict(title="Años a FIRE"),
@@ -1060,16 +1075,16 @@ def render_sensitivity_analysis(params: Dict) -> None:
         if range_years < 10:
             st.success(
                 f"✅ **Tu plan es robusto.** Variaciones de rentabilidad/inflación solo mueven "
-                f"el timeline en {range_years:.0f} años. Eres resiliente a cambios de mercado."
+                f"el timeline en {range_years:.1f} años. Eres resiliente a cambios de mercado."
             )
         elif range_years < 20:
             st.info(
-                f"⚡ **Sensibilidad moderada.** Tu timeline puede variar {range_years:.0f} años "
+                f"⚡ **Sensibilidad moderada.** Tu timeline puede variar {range_years:.1f} años "
                 f"según condiciones. Monitorea mercados pero no entres en pánico."
             )
         else:
             st.warning(
-                f"⚠️ **Alta sensibilidad.** Tu plan varía {range_years:.0f} años según escenarios. "
+                f"⚠️ **Alta sensibilidad.** Tu plan varía {range_years:.1f} años según escenarios. "
                 f"Considera aumentar ahorros para menos dependencia de mercados optimistas."
             )
 
@@ -1080,7 +1095,7 @@ def render_sensitivity_analysis(params: Dict) -> None:
 
 def render_export_options(simulation_results: Dict, params: Dict) -> None:
     """
-    Export CSV (full time series) and PDF (executive summary).
+    Export CSV (full time series) and PDF (executive summary), and support options.
     """
     st.subheader("📥 Exportar Resultados")
 
@@ -1113,11 +1128,35 @@ def render_export_options(simulation_results: Dict, params: Dict) -> None:
         )
 
     with col2:
-        # PDF Export placeholder (would need reportlab in production)
-        st.info(
-            "📄 **Generar PDF:** Reporte ejecutivo (1 página) con KPIs, gráfico principal y "
-            "recomendaciones. Beta en desarrollo."
-        )
+        # PDF Export placeholder with friendly message
+        col_pdf, col_coffee = st.columns([2, 1])
+        
+        with col_pdf:
+            st.info(
+                "📄 **Generar PDF:** Reporte ejecutivo (1 página) con KPIs, gráfico principal y "
+                "recomendaciones. Beta en desarrollo."
+            )
+        
+        with col_coffee:
+            st.markdown(
+                "<a href='https://buymeacoffee.com' target='_blank' style='display: inline-block; padding: 10px 20px; "
+                "background-color: #FFDD00; color: #222; text-decoration: none; border-radius: 5px; font-weight: bold;'>"
+                "☕ Apóyame"
+                "</a>",
+                unsafe_allow_html=True
+            )
+    
+    st.markdown("---")
+    st.markdown(
+        "<div style='text-align: center; color: #666; font-size: 14px;'>"
+        "<p>❤️ <strong>¿Te ha sido útil esta herramienta?</strong></p>"
+        "<p>Esta calculadora es gratuita, sin publicidad, y siempre lo será. "
+        "Si deseas apoyar el desarrollo y mantener la fiscalidad española actualizada, "
+        "<a href='https://buymeacoffee.com' target='_blank' style='color: #FF6B6B; font-weight: bold;'>"
+        "invítame a un café ☕</a></p>"
+        "</div>",
+        unsafe_allow_html=True
+    )
 
 
 # =====================================================================
