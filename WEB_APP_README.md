@@ -114,12 +114,14 @@ En despliegues cloud, evita introducir datos sensibles y revisa la política del
 3. **Cobertura temporal actual**
 - Tax Pack integrado en el repo: `ES-2026`.
 
-4. **SWR en web**
-- El objetivo FIRE base se calcula con SWR fija del 4% en esta versión.
+4. **SWR configurable en web**
+- El objetivo FIRE se calcula con TRS/SWR configurable.
 
-5. **Supuestos de Monte Carlo**
-- Retornos con distribución normal y parámetros constantes.
-- No modela todos los escenarios extremos de mercado.
+5. **Modelos estocásticos disponibles**
+- Monte Carlo normal.
+- Monte Carlo bootstrap histórico.
+- Backtesting histórico por ventanas móviles.
+- Aun así, siguen siendo aproximaciones y no cubren toda la complejidad de mercado.
 
 6. **Fiscalidad simplificada anual**
 - IRPF ahorro, Patrimonio e ISGF se aplican como drag anual aproximado.
@@ -127,6 +129,16 @@ En despliegues cloud, evita introducir datos sensibles y revisa la política del
 
 7. **Paridad CLI/Web**
 - Algunas capacidades del CLI aún no están expuestas en la web con el mismo nivel de detalle.
+
+## 📍 Pendiente por Resolver
+
+1. Validación legal/fiscal externa por CCAA para reforzar confianza normativa.
+2. Pipeline de actualización automática del Tax Pack por ejercicio fiscal.
+3. Backtesting de carteras personalizadas (multi-activo, rebalanceo configurable).
+4. Export por ventana histórica en modo backtesting.
+5. Tests de paridad completos entre CLI y web.
+6. Refactor técnico para reducir complejidad de `app.py`.
+7. Mejoras de UX en inputs avanzados y trazabilidad visual.
 
 ---
 
@@ -302,10 +314,10 @@ streamlit run app.py --server.port=8502
 ## 📝 Arquitectura de Código
 
 ```
-app.py (1,230 líneas)
-├── CONFIGURATION & CONSTANTS (líneas 45-139)
-│   ├─ PAGE_CONFIG, COLOR_SCHEME, VALIDATION_RULES
-│   └─ 5 funciones generadoras de textos dinámicos
+app.py (~1,400 líneas)
+├── CONFIGURATION & CONSTANTS
+│   ├─ PAGE_CONFIG, COLOR_SCHEME, WEB_PROFILES
+│   └─ funciones generadoras de textos dinámicos
 │
 ├── SESSION STATE (líneas 140-145)
 │   └─ Inicialización de caché

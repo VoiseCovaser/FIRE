@@ -22,6 +22,8 @@ The source code is available on GitHub: [robermad1986/FIRE](https://github.com/r
 - [Examples](#-ejemplos)
 - [Testing](#-testing)
 - [Limitaciones Actuales](#-limitaciones-actuales-importantes)
+- [Pendiente por Resolver](#-pendiente-por-resolver)
+- [Backlog Reddit](#-backlog-reddit-priorizado)
 - [Disclaimers](#-disclaimers)
 
 ---
@@ -70,17 +72,36 @@ The source code is available on GitHub: [robermad1986/FIRE](https://github.com/r
 3. **Cobertura temporal actual del pack: 2026**  
    En el estado actual del repo, el pack integrado es `ES-2026`.
 
-4. **SWR no está al mismo nivel en CLI y web**  
-   En CLI es configurable; en web el objetivo FIRE base sigue calculándose con SWR fija del 4%.
+4. **SWR configurable en CLI y web**  
+   El objetivo FIRE usa TRS/SWR configurable en ambas interfaces.
 
-5. **Modelo de mercado simplificado**  
-   Monte Carlo usa distribución normal con parámetros constantes (retorno/volatilidad). No cubre todos los riesgos de cola ni cambios de régimen.
+5. **Modelo de mercado en transición (más robusto, aún simplificado)**  
+   La web soporta Monte Carlo normal, bootstrap histórico y backtesting por ventanas, pero sigue siendo una aproximación cuantitativa.
 
 6. **Impuestos modelados como aproximación anual**  
    IRPF ahorro + Patrimonio + ISGF se aplican como drag anual sobre la simulación. No cubre toda la casuística personal (mínimos familiares, deducciones específicas, etc.).
 
-7. **Paridad funcional CLI/Web aún incompleta**  
-   Hay funcionalidades avanzadas del CLI que todavía no están expuestas con el mismo detalle en la interfaz web.
+7. **Paridad funcional CLI/Web en progreso**  
+   Se ha avanzado en paridad (SWR, modelos), pero hay diferencias de UX y profundidad en algunos flujos.
+
+## 📍 Pendiente por Resolver
+
+1. Validación legal profunda por CCAA con revisión externa (más allá del Tax Pack técnico).
+2. Automatización completa de actualización anual de Tax Pack contra fuentes oficiales.
+3. Backtesting de cartera personalizable multi-activo (no solo serie histórica de mercado general).
+4. Export detallado de resultados de backtesting por ventana histórica.
+5. Tests de paridad end-to-end CLI vs Web para escenarios canónicos.
+6. Refactor de `app.py` y `src/cli.py` para reducir complejidad ciclomática.
+7. Mejoras de UX no bloqueantes (inputs de alta precisión, ayudas contextuales más finas).
+8. Observabilidad/logging estructurado para soporte y diagnóstico en producción.
+
+## 🧭 Backlog Reddit Priorizado
+
+El plan de ejecución basado en propuestas del post de Reddit está en:
+
+- `BACKLOG_REDDIT.md`
+
+Incluye tickets `P0/P1/P2`, criterios de aceptación y orden recomendado para implementación.
 
 ---
 

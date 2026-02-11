@@ -9,14 +9,19 @@ import math
 from pathlib import Path
 from typing import Dict, Any, Optional
 import sys
-from pathlib import Path
-import random  # For Monte Carlo simulations
 import re
+import numpy as np
 
 # Add project root to sys.path to allow imports from src
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.calculator import target_fire, coast_fire_condition, project_portfolio, calculate_gross_target, calculate_savings_rate, project_retirement, calculate_market_scenarios, calculate_net_worth
+from src.calculator import target_fire, coast_fire_condition, project_portfolio, calculate_gross_target, calculate_net_worth
+from src.simulation_models import (
+    monte_carlo_normal,
+    monte_carlo_bootstrap,
+    backtest_rolling_windows,
+    load_historical_annual_returns,
+)
 
 
 # ============================================================================
@@ -1127,8 +1132,6 @@ def show_summary(config: Dict[str, Any]):
     """Show configuration summary before running calculations."""
     print_section("Resumen de tu Perfil FIRE")
     
-    from src.calculator import calculate_net_worth
-    
     print("OBJETIVOS:")
     print(f"  • Gasto anual deseado: €{config['annual_spending']:,.0f}")
     print(f"  • Tasa de Retirada Segura (TRS): {config['safe_withdrawal_rate']*100:.1f}%")
@@ -1387,55 +1390,59 @@ def get_motivational_message(config: Dict[str, Any], years_to_fire: Optional[int
 # MONTE CARLO & KPI FUNCTIONS FOR ADVANCED REPORTING
 # ============================================================================
 
-def simulate_monte_carlo(config: Dict[str, Any], simulations: int = 10000) -> Dict[str, Any]:
+def simulate_monte_carlo(
+    config: Dict[str, Any],
+    simulations: int = 10000,
+    model_type: str = "normal",
+) -> Dict[str, Any]:
     """
     Run Monte Carlo simulation to estimate probability of success.
     
     Assumes returns are normally distributed with mean = expected_return,
     std dev = about 15% (typical market volatility).
     """
-    random.seed(42)  # For reproducibility
-    
     target = target_fire(config['annual_spending'], config['safe_withdrawal_rate'])
-    current = config['current_savings']
-    annual_contrib = config['annual_contribution']
     years_to_simulate = config.get('years_horizon', 25)
-    mean_return = config['expected_return']
-    inflation = config['inflation_rate']
-    
-    # Asset volatility (standard deviation of returns)
-    # Conservative estimate: 15% annually
-    volatility = 0.15
-    
-    success_count = 0
-    final_values = []
-    
-    for _ in range(simulations):
-        portfolio = current
-        
-        for year in range(years_to_simulate):
-            # Random annual return from normal distribution
-            annual_return = random.gauss(mean_return, volatility)
-            
-            # Growth + contribution
-            portfolio = portfolio * (1 + annual_return) + annual_contrib
-            
-            # Adjust contribution for inflation
-            adjusted_contrib = annual_contrib * ((1 + inflation) ** (year + 1))
-        
-        final_values.append(portfolio)
-        
-        # Check if portfolio reached target
-        if portfolio >= target:
-            success_count += 1
-    
-    success_rate = (success_count / simulations) * 100
-    
-    # Calculate percentiles
-    final_values_sorted = sorted(final_values)
-    percentile_10 = final_values_sorted[int(len(final_values) * 0.10)]
-    percentile_50 = final_values_sorted[int(len(final_values) * 0.50)]
-    percentile_90 = final_values_sorted[int(len(final_values) * 0.90)]
+    base_args = dict(
+        initial_wealth=config['current_savings'],
+        monthly_contribution=config['annual_contribution'] / 12.0,
+        years=years_to_simulate,
+        inflation_rate=config['inflation_rate'],
+        annual_spending=config['annual_spending'],
+        safe_withdrawal_rate=config['safe_withdrawal_rate'],
+    )
+
+    if model_type == "bootstrap":
+        sim_raw = monte_carlo_bootstrap(
+            **base_args,
+            historical_returns=load_historical_annual_returns(),
+            num_simulations=simulations,
+            seed=42,
+        )
+    elif model_type == "backtest":
+        sim_raw = backtest_rolling_windows(
+            **base_args,
+            historical_returns=load_historical_annual_returns(),
+        )
+    else:
+        sim_raw = monte_carlo_normal(
+            **base_args,
+            mean_return=config['expected_return'],
+            volatility=0.15,
+            num_simulations=simulations,
+            seed=42,
+        )
+
+    final_values = np.array(sim_raw["final_values"], dtype=float)
+    success_rate = float(sim_raw["success_rate_final"])
+    percentile_10 = float(np.percentile(final_values, 10))
+    percentile_50 = float(np.percentile(final_values, 50))
+    percentile_90 = float(np.percentile(final_values, 90))
+    model_label = {
+        "normal": "Monte Carlo (Normal)",
+        "bootstrap": "Monte Carlo (Bootstrap histórico)",
+        "backtest": "Backtesting histórico",
+    }.get(model_type, "Monte Carlo (Normal)")
     
     return {
         'success_rate': success_rate,
@@ -1443,7 +1450,9 @@ def simulate_monte_carlo(config: Dict[str, Any], simulations: int = 10000) -> Di
         'percentile_50': percentile_50,    # Median scenario
         'percentile_90': percentile_90,    # Optimistic scenario
         'target': target,
-        'mean_final': sum(final_values) / len(final_values),
+        'mean_final': float(np.mean(final_values)),
+        'model_label': model_label,
+        'scenarios_count': int(sim_raw.get("n_sims", len(final_values))),
     }
 
 
@@ -1585,6 +1594,49 @@ def calculate_kpis(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def estimate_cli_tax_breakdown_one_year(config: Dict[str, Any]) -> Dict[str, float]:
+    """Approximate one-year tax components for CLI traceability."""
+    portfolio = float(config.get("current_savings", 0.0))
+    expected_return = float(config.get("expected_return", 0.0))
+    taxable_share = 1.0
+
+    equity_share = 0.60
+    bond_share = 0.30
+    cash_share = 0.10
+    dividend_yield_fraction = 0.15
+
+    equity_return = portfolio * equity_share * expected_return
+    bond_return = portfolio * bond_share * expected_return
+    cash_return = portfolio * cash_share * expected_return
+    gross_return = equity_return + bond_return + cash_return
+
+    dividend_amount = equity_return * dividend_yield_fraction
+    capital_gain_amount = gross_return - dividend_amount
+
+    div_rate = min(1.0, max(0.0, config.get("tax_rate_on_dividends", 0.0) + config.get("withholding_tax", 0.0)))
+    gains_rate = max(0.0, config.get("tax_rate_on_gains", 0.0))
+    interest_rate = max(0.0, config.get("tax_rate_on_interest", 0.0))
+    social_rate = max(0.0, config.get("social_security_contributions", 0.0))
+
+    tax_on_dividends = dividend_amount * taxable_share * div_rate
+    tax_on_interest = bond_return * taxable_share * interest_rate
+    tax_on_gains = capital_gain_amount * taxable_share * gains_rate
+    social_security_tax = gross_return * taxable_share * social_rate
+    total_tax = tax_on_dividends + tax_on_interest + tax_on_gains + social_security_tax
+
+    return {
+        "gross_return": gross_return,
+        "dividend_amount": dividend_amount,
+        "capital_gain_amount": capital_gain_amount,
+        "bond_return": bond_return,
+        "tax_on_dividends": tax_on_dividends,
+        "tax_on_interest": tax_on_interest,
+        "tax_on_gains": tax_on_gains,
+        "social_security_tax": social_security_tax,
+        "total_tax": total_tax,
+    }
+
+
 def show_results(config: Dict[str, Any]):
     """Display comprehensive results and analysis."""
     print_section("🎯 RESULTADOS DE TU ANÁLISIS FIRE")
@@ -1653,15 +1705,36 @@ def show_results(config: Dict[str, Any]):
     print("║              🎲 ANÁLISIS DE MONTECARLO (Probabilidad de Éxito)            ║")
     print("╚════════════════════════════════════════════════════════════════════════════╝\n")
     
-    print("  Simulando 10,000 escenarios con retornos variable ({:.1f}% ± 15% volatividad)".format(config['expected_return']*100))
+    print("  Simulando modelos probabilísticos y backtesting histórico")
     print("  Horizonte: {} años | Objetivo: €{:,.0f}\n".format(config.get('years_horizon', 25), target))
-    
-    mc_results = simulate_monte_carlo(config, simulations=10000)
-    
-    print(f"  ✅ PROBABILIDAD DE ÉXITO:                {mc_results['success_rate']:>14.1f}%")
+
+    model_results = [
+        simulate_monte_carlo(config, simulations=10000, model_type="normal"),
+        simulate_monte_carlo(config, simulations=10000, model_type="bootstrap"),
+        simulate_monte_carlo(config, simulations=10000, model_type="backtest"),
+    ]
+    mc_results = model_results[0]
+
+    print("  📊 COMPARATIVA DE MODELOS (P1):")
+    print("  ┌──────────────────────────────────────┬───────────┬──────────────┬──────────────┬──────────────┐")
+    print("  │ Modelo                               │ Éxito (%) │ P10 (€)       │ P50 (€)       │ P90 (€)       │")
+    print("  ├──────────────────────────────────────┼───────────┼──────────────┼──────────────┼──────────────┤")
+    for result in model_results:
+        print(
+            f"  │ {result['model_label'][:36].ljust(36)} │ "
+            f"{result['success_rate']:>8.1f}% │ "
+            f"€{result['percentile_10']:>11,.0f} │ "
+            f"€{result['percentile_50']:>11,.0f} │ "
+            f"€{result['percentile_90']:>11,.0f} │"
+        )
+    print("  └──────────────────────────────────────┴───────────┴──────────────┴──────────────┴──────────────┘")
+    print(f"  Nota: backtesting usa {model_results[2]['scenarios_count']} ventanas históricas.\n")
+    print("  Fuente histórica: Fama/French US Market annual returns (CRSP).\n")
+
+    print(f"  ✅ PROBABILIDAD DE ÉXITO (modelo base normal):  {mc_results['success_rate']:>9.1f}%")
     print(f"     (Probabilidad de alcanzar €{target:,.0f} en {config.get('years_horizon', 25)} años)\n")
-    
-    print(f"  📊 ESCENARIOS PROYECTADOS EN {config.get('years_horizon', 25)} AÑOS:")
+
+    print(f"  📊 ESCENARIOS PROYECTADOS EN {config.get('years_horizon', 25)} AÑOS (modelo base):")
     print(f"     Pesimista (10º percentil):         €{mc_results['percentile_10']:>15,.0f}  ({(mc_results['percentile_10']/target)*100:>5.1f}% del objetivo)")
     print(f"     Mediano (50º percentil):           €{mc_results['percentile_50']:>15,.0f}  ({(mc_results['percentile_50']/target)*100:>5.1f}% del objetivo)")
     print(f"     Optimista (90º percentil):         €{mc_results['percentile_90']:>15,.0f}  ({(mc_results['percentile_90']/target)*100:>5.1f}% del objetivo)")
@@ -1747,6 +1820,18 @@ def show_results(config: Dict[str, Any]):
     print("     • Los impuestos sobre plusvalías se pagan SOLO cuando vendes (diferimiento fiscal)")
     print("     • Una vez alcances tu objetivo FIRE, pagarás impuestos al realizar la ganancia")
     print("     • 'Real' está ajustado por inflación; muestra poder de compra actual.\n")
+
+    tax_trace = estimate_cli_tax_breakdown_one_year(config)
+    print("  🧾 TRAZABILIDAD FISCAL CLI (aproximación anual, 1er año)")
+    print(f"     • Base retorno bruto estimada:       €{tax_trace['gross_return']:>12,.0f}")
+    print(f"       - Dividendos estimados:            €{tax_trace['dividend_amount']:>12,.0f}")
+    print(f"       - Plusvalía estimada:              €{tax_trace['capital_gain_amount']:>12,.0f}")
+    print(f"       - Intereses estimados (bonos):     €{tax_trace['bond_return']:>12,.0f}")
+    print(f"     • Impuesto dividendos:               €{tax_trace['tax_on_dividends']:>12,.0f}")
+    print(f"     • Impuesto intereses:                €{tax_trace['tax_on_interest']:>12,.0f}")
+    print(f"     • Impuesto plusvalías:               €{tax_trace['tax_on_gains']:>12,.0f}")
+    print(f"     • Cotización social (si aplica):     €{tax_trace['social_security_tax']:>12,.0f}")
+    print(f"     • Carga fiscal total estimada:       €{tax_trace['total_tax']:>12,.0f}\n")
     
     # Coast FIRE scenario
     print("╔════════════════════════════════════════════════════════════════════════════╗")
