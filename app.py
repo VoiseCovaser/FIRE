@@ -1563,7 +1563,7 @@ def render_main_chart(simulation_results: Dict, params: Dict) -> None:
         yaxis=dict(tickformat=",.0f"),
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"responsive": True})
+    st.plotly_chart(fig, width="stretch", config={"responsive": True})
     if params.get("modo_guiado", False):
         st.caption(
             "Lectura rápida: línea azul = escenario central. Banda ancha = incertidumbre. "
@@ -1613,7 +1613,7 @@ def render_success_distribution_chart(simulation_results: Dict, params: Dict) ->
         showlegend=False,
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"responsive": True})
+    st.plotly_chart(fig, width="stretch", config={"responsive": True})
     if params.get("modo_guiado", False):
         st.caption(
             "Cada barra muestra la probabilidad acumulada de haber alcanzado FIRE en ese año."
@@ -1736,7 +1736,7 @@ def render_sensitivity_analysis(params: Dict) -> None:
         yaxis_title="Inflación esperada",
     )
 
-    st.plotly_chart(fig, use_container_width=True, config={"responsive": True})
+    st.plotly_chart(fig, width="stretch", config={"responsive": True})
 
     # Dynamic sensitivity insights  
     sensitivity_col1, sensitivity_col2 = st.columns(2)
