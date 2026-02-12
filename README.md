@@ -57,6 +57,9 @@ The source code is available on GitHub: [robermad1986/FIRE](https://github.com/r
 Nota de consistencia reciente (web): la explicación del objetivo FIRE en el panel guiado se calcula en tiempo real con la fórmula
 `Objetivo de cartera = Gastos anuales / SWR`, y el objetivo mostrado se unifica entre KPIs, gráfico principal y exportes.
 
+Actualización reciente (web): ahora puedes incorporar **renta bruta anual por alquileres** y un **ajuste anual de gasto por vivienda habitual**
+para estimar el gasto neto que debe cubrir la cartera en jubilación. Además, el bloque de decumulación muestra escenarios `P5/P25/P50/P75/P95`.
+
 ### 🧪 Validación Exhaustiva
 
 - ✅ **Test Suite Completa** — 30+ unit tests

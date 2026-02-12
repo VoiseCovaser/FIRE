@@ -44,6 +44,13 @@ Desplegar en **Streamlit Cloud** con un solo click: [Abrir en línea]() *(en des
   - `Objetivo de cartera = Gastos anuales / SWR`
   - con cálculo en tiempo real según tus valores.
 - Consistencia del objetivo mostrado en KPIs, gráficos y exportes cuando se usa enfoque fiscal de jubilación.
+- Integración de ingresos inmobiliarios:
+  - renta bruta anual por alquiler configurable,
+  - opción para incluirla en simulación.
+- Ajuste de gasto en jubilación por vivienda habitual:
+  - permite descontar un ahorro anual estimado del gasto que debe cubrir la cartera.
+- Gestión del capital en jubilación ampliada a percentiles:
+  - `P5`, `P25`, `P50`, `P75`, `P95`.
 
 ### 1. **Panel de Control Interactivo (Sidebar)**
 Configura tu perfil en tiempo real:
@@ -59,6 +66,7 @@ Configura tu perfil en tiempo real:
 Nota: puedes elegir si la simulación parte de cartera líquida (modo base) o capital invertible ampliado
 (cartera líquida + equity de inmuebles invertibles - otras deudas). La vivienda habitual no se incluye en esa base.
 En modo guiado, el objetivo FIRE se recalcula al momento al cambiar gasto anual o SWR.
+Si activas rentas de alquiler y/o ahorro por vivienda habitual, el gasto neto que debe cubrir la cartera se ajusta en consecuencia.
 
 ### 2. **Dashboard de KPIs con Color-Coding Automático**
 

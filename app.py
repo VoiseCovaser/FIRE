@@ -403,13 +403,28 @@ def render_active_context_summary(params: Dict) -> None:
         if fiscal_focus == "jubilación"
         else "La simulación prioriza la fiscalidad durante los años previos a FIRE."
     )
+    renta_efectiva = params.get("renta_bruta_alquiler_anual_efectiva", 0.0)
+    ahorro_vivienda_efectivo = params.get("ahorro_vivienda_habitual_anual_efectivo", 0.0)
+    renta_sentence = ""
+    if renta_efectiva > 0:
+        renta_sentence = (
+            f" También se está considerando una renta bruta por alquiler de **€{renta_efectiva:,.0f}/año** "
+            "como apoyo al plan (aproximación sin modelado fiscal inmobiliario detallado)."
+        )
+    vivienda_sentence = ""
+    if ahorro_vivienda_efectivo > 0:
+        vivienda_sentence = (
+            f" Además, se descuenta un ahorro anual por vivienda habitual de **€{ahorro_vivienda_efectivo:,.0f}** "
+            "al calcular el gasto que debe cubrir la cartera."
+        )
 
     st.markdown(
         "### 📘 Contexto del escenario activo\n"
         f"En esta ejecución, la simulación arranca desde **{base_name}** "
         f"(base usada: **€{params.get('patrimonio_base_simulacion', params['patrimonio_inicial']):,.0f}**, "
         f"{base_explanation}; la vivienda habitual se mantiene fuera de esta base). "
-        f"Además, el enfoque fiscal está orientado a **{fiscal_focus}**: {fiscal_sentence}"
+        f"Además, el enfoque fiscal está orientado a **{fiscal_focus}**: "
+        f"{fiscal_sentence}{renta_sentence}{vivienda_sentence}"
     )
 
 
@@ -424,10 +439,25 @@ def render_simple_result_summary(simulation_results: Dict, params: Dict) -> None
         timeline_text = f"No se alcanza FIRE en el horizonte elegido ({years_horizon} años)."
     else:
         timeline_text = f"El escenario central llega a FIRE en aproximadamente {years_to_fire} años."
+    renta_line = ""
+    renta_efectiva = params.get("renta_bruta_alquiler_anual_efectiva", 0.0)
+    if renta_efectiva > 0:
+        renta_line = (
+            f"- Renta bruta por alquiler considerada: **€{renta_efectiva:,.0f}/año** "
+            "(aproximación sin fiscalidad inmobiliaria detallada).\n"
+        )
+    vivienda_line = ""
+    ahorro_vivienda_efectivo = params.get("ahorro_vivienda_habitual_anual_efectivo", 0.0)
+    if ahorro_vivienda_efectivo > 0:
+        vivienda_line = (
+            f"- Ahorro anual por vivienda habitual considerado: **€{ahorro_vivienda_efectivo:,.0f}/año**.\n"
+        )
 
     st.info(
         "🗣️ **Resumen en lenguaje simple**\n\n"
         f"- Capital inicial usado en simulación: **€{params.get('patrimonio_base_simulacion', params['patrimonio_inicial']):,.0f}**.\n"
+        f"{renta_line}"
+        f"{vivienda_line}"
         f"- Tu objetivo de cartera es **€{fire_target:,.0f}**.\n"
         f"- {timeline_text}\n"
         f"- Probabilidad estimada de éxito: **{success_rate:.0f}%**.\n\n"
@@ -532,8 +562,9 @@ def render_retirement_tax_focus_summary(params: Dict) -> None:
     st.caption(
         "Este bloque prioriza impuestos durante la jubilación (retiros), no la acumulación previa."
     )
+    net_spending_for_portfolio = params.get("gasto_anual_neto_cartera", params["gastos_anuales"])
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Gasto neto deseado", f"€{params['gastos_anuales']:,.0f}")
+    col1.metric("Gasto neto deseado", f"€{net_spending_for_portfolio:,.0f}")
     col2.metric("Retirada bruta estimada", f"€{ctx['gross_withdrawal_required']:,.0f}")
     col3.metric("Impuestos anuales estimados", f"€{ctx['total_annual_tax_retirement']:,.0f}")
     col4.metric("Objetivo FIRE ajustado", f"€{ctx['target_portfolio_gross']:,.0f}")
@@ -545,6 +576,14 @@ def render_retirement_tax_focus_summary(params: Dict) -> None:
         "Referencia de fórmula: objetivo base = gasto neto / SWR. Al subir SWR, ese objetivo base baja; "
         "el ajuste fiscal puede suavizar esa caída, pero no invertirla en condiciones normales."
     )
+    if params.get("renta_bruta_alquiler_anual_efectiva", 0) > 0:
+        st.caption(
+            f"Ingreso bruto alquiler considerado: €{params['renta_bruta_alquiler_anual_efectiva']:,.0f}/año."
+        )
+    if params.get("ahorro_vivienda_habitual_anual_efectivo", 0) > 0:
+        st.caption(
+            f"Ahorro anual por vivienda habitual considerado: €{params['ahorro_vivienda_habitual_anual_efectivo']:,.0f}/año."
+        )
 
 
 def build_decumulation_table(
@@ -1027,6 +1066,21 @@ def render_sidebar() -> Dict:
             value=0,
             step=10_000,
         )
+        aplicar_ajuste_vivienda_habitual = st.checkbox(
+            "Ajustar gasto de jubilación por vivienda habitual pagada",
+            value=False,
+            disabled=vivienda_habitual_valor <= 0,
+            help="Si ya tienes vivienda habitual, parte del gasto de jubilación puede reducirse (alquiler/hipoteca).",
+        )
+        ahorro_vivienda_habitual_anual = st.number_input(
+            "Ahorro anual estimado por vivienda habitual (€)",
+            min_value=0,
+            max_value=200_000,
+            value=0,
+            step=500,
+            disabled=not aplicar_ajuste_vivienda_habitual,
+            help="Cuánto gasto anual dejarías de necesitar cubrir con la cartera por tener vivienda habitual.",
+        )
         inmuebles_invertibles_valor = st.number_input(
             "Valor inmuebles invertibles (€)",
             min_value=0,
@@ -1052,6 +1106,22 @@ def render_sidebar() -> Dict:
             "Usar capital invertible ampliado como base de simulación",
             value=False,
             help="Usa cartera líquida + equity de inmuebles invertibles - otras deudas. No incluye vivienda habitual.",
+        )
+        renta_bruta_alquiler_anual = st.number_input(
+            "Renta bruta anual por alquileres (€)",
+            min_value=0,
+            max_value=2_000_000,
+            value=0,
+            step=1_000,
+            help="Ingresos brutos anuales por alquiler de inmuebles.",
+        )
+        incluir_rentas_alquiler_en_simulacion = st.checkbox(
+            "Incluir rentas de alquiler en simulación",
+            value=True,
+            help="Suma la renta al ahorro anual y reduce el gasto que debe cubrir la cartera en FIRE (aproximación).",
+        )
+        st.caption(
+            "Nota: se usa renta bruta como aproximación. No modela en detalle gastos deducibles, vacancia ni IRPF inmobiliario."
         )
 
     st.sidebar.divider()
@@ -1213,6 +1283,8 @@ def render_sidebar() -> Dict:
         "modo_guiado": modo_guiado,
         "vivienda_habitual_valor": vivienda_habitual_valor,
         "vivienda_habitual_hipoteca": vivienda_habitual_hipoteca,
+        "aplicar_ajuste_vivienda_habitual": aplicar_ajuste_vivienda_habitual,
+        "ahorro_vivienda_habitual_anual": ahorro_vivienda_habitual_anual,
         "inmuebles_invertibles_valor": inmuebles_invertibles_valor,
         "inmuebles_invertibles_hipoteca": inmuebles_invertibles_hipoteca,
         # Compatibilidad con nombres anteriores
@@ -1226,6 +1298,8 @@ def render_sidebar() -> Dict:
         "equity_inmuebles_invertibles": equity_inmuebles_invertibles,
         "capital_invertible_ampliado": capital_invertible_ampliado,
         "usar_capital_invertible_ampliado": usar_capital_invertible_ampliado,
+        "renta_bruta_alquiler_anual": renta_bruta_alquiler_anual,
+        "incluir_rentas_alquiler_en_simulacion": incluir_rentas_alquiler_en_simulacion,
         # Compatibilidad con lógica previa
         "usar_patrimonio_neto_en_simulacion": usar_capital_invertible_ampliado,
         "net_worth_data": net_worth_data,
@@ -1910,6 +1984,26 @@ def main():
 
     # 1. RENDER SIDEBAR (Input Collection)
     params = render_sidebar()
+    renta_bruta_anual = (
+        params.get("renta_bruta_alquiler_anual", 0.0)
+        if params.get("incluir_rentas_alquiler_en_simulacion", True)
+        else 0.0
+    )
+    ahorro_vivienda_anual = (
+        params.get("ahorro_vivienda_habitual_anual", 0.0)
+        if params.get("aplicar_ajuste_vivienda_habitual", False)
+        else 0.0
+    )
+    aportacion_mensual_efectiva = params["aportacion_mensual"] + (renta_bruta_anual / 12.0)
+    gasto_anual_neto_cartera = max(
+        0.0,
+        params["gastos_anuales"] - renta_bruta_anual - ahorro_vivienda_anual,
+    )
+    params["renta_bruta_alquiler_anual_efectiva"] = renta_bruta_anual
+    params["ahorro_vivienda_habitual_anual_efectivo"] = ahorro_vivienda_anual
+    params["aportacion_mensual_efectiva"] = aportacion_mensual_efectiva
+    params["gasto_anual_neto_cartera"] = gasto_anual_neto_cartera
+
     render_active_context_summary(params)
     tax_drag = get_fiscal_return_adjustment(
         params["regimen_fiscal"],
@@ -1971,7 +2065,7 @@ def main():
 
         if params.get("fiscal_priority") == "Jubilación":
             retirement_ctx = estimate_retirement_tax_context(
-                net_spending=params["gastos_anuales"],
+                net_spending=gasto_anual_neto_cartera,
                 safe_withdrawal_rate=params["safe_withdrawal_rate"],
                 taxable_withdrawal_ratio=params.get("taxable_withdrawal_ratio", 0.4),
                 tax_pack=tax_pack_for_run,
@@ -1983,8 +2077,8 @@ def main():
             tax_pack_accumulation = None
         else:
             params["retirement_tax_context"] = None
-            annual_spending_for_target = params["gastos_anuales"]
-            params["fire_target_effective"] = params["gastos_anuales"] / params["safe_withdrawal_rate"]
+            annual_spending_for_target = gasto_anual_neto_cartera
+            params["fire_target_effective"] = gasto_anual_neto_cartera / params["safe_withdrawal_rate"]
             tax_pack_accumulation = tax_pack_for_run
 
         params["annual_spending_for_target"] = annual_spending_for_target
@@ -2001,15 +2095,17 @@ def main():
 
             params_key = (
                 f"{params['patrimonio_inicial']}_{params.get('patrimonio_base_simulacion')}_{params['aportacion_mensual']}_"
+                f"{params.get('aportacion_mensual_efectiva')}_{params.get('renta_bruta_alquiler_anual_efectiva')}_"
+                f"{params.get('ahorro_vivienda_habitual_anual_efectivo')}_"
                 f"{params['rentabilidad_esperada']}_{params['volatilidad']}_{params['inflacion']}_"
-                f"{params['gastos_anuales']}_{params['regimen_fiscal']}_{params['include_optimización']}_"
+                f"{params['gastos_anuales']}_{params.get('gasto_anual_neto_cartera')}_{params['regimen_fiscal']}_{params['include_optimización']}_"
                 f"{params['safe_withdrawal_rate']}_{params.get('fiscal_priority')}_{params.get('taxable_withdrawal_ratio')}_"
                 f"{model_type}_{historical_strategy}_{params.get('tax_year')}_{params.get('region')}"
             )
             simulation_results_by_model[model_label] = run_cached_simulation(
                 params_key=params_key,
                 initial_wealth=params.get("patrimonio_base_simulacion", params["patrimonio_inicial"]),
-                monthly_contribution=params["aportacion_mensual"],
+                monthly_contribution=params.get("aportacion_mensual_efectiva", params["aportacion_mensual"]),
                 years=params["edad_objetivo"] - params["edad_actual"],
                 mean_return=mean_return_for_sim,
                 volatility=params["volatilidad"],
@@ -2049,15 +2145,17 @@ def main():
                     model_type = "bootstrap" if label == "Monte Carlo (Bootstrap histórico)" else "backtest"
                     params_key = (
                         f"{params['patrimonio_inicial']}_{params.get('patrimonio_base_simulacion')}_{params['aportacion_mensual']}_"
+                        f"{params.get('aportacion_mensual_efectiva')}_{params.get('renta_bruta_alquiler_anual_efectiva')}_"
+                        f"{params.get('ahorro_vivienda_habitual_anual_efectivo')}_"
                         f"{params['rentabilidad_esperada']}_{params['volatilidad']}_{params['inflacion']}_"
-                        f"{params['gastos_anuales']}_{params['regimen_fiscal']}_{params['include_optimización']}_"
+                        f"{params['gastos_anuales']}_{params.get('gasto_anual_neto_cartera')}_{params['regimen_fiscal']}_{params['include_optimización']}_"
                         f"{params['safe_withdrawal_rate']}_{params.get('fiscal_priority')}_{params.get('taxable_withdrawal_ratio')}_"
                         f"{model_type}_{chosen_strategy}_{params.get('tax_year')}_{params.get('region')}"
                     )
                     simulation_results_by_model[label] = run_cached_simulation(
                         params_key=params_key,
                         initial_wealth=params.get("patrimonio_base_simulacion", params["patrimonio_inicial"]),
-                        monthly_contribution=params["aportacion_mensual"],
+                        monthly_contribution=params.get("aportacion_mensual_efectiva", params["aportacion_mensual"]),
                         years=params["edad_objetivo"] - params["edad_actual"],
                         mean_return=mean_return_for_sim,
                         volatility=params["volatilidad"],
