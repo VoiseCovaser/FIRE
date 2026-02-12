@@ -603,74 +603,80 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
         help="Horizonte de retirada para la tabla de decumulación.",
     )
 
-    starting_portfolio_p50 = float(simulation_results["percentile_50"][-1])
-    starting_portfolio_p25 = float(simulation_results["percentile_25"][-1])
+    percentile_series = {
+        "P5": "percentile_5",
+        "P25": "percentile_25",
+        "P50": "percentile_50",
+        "P75": "percentile_75",
+        "P95": "percentile_95",
+    }
+    starting_portfolios = {
+        label: float(simulation_results[key][-1]) for label, key in percentile_series.items()
+    }
     annual_withdrawal_base = float(params.get("annual_spending_for_target", params["gastos_anuales"]))
     tax_rate_hint = 0.19 if params["regimen_fiscal"] in ("España - Fondos de Inversión", "España - Cartera Directa") else 0.15
 
-    dec_df_p25 = build_decumulation_table(
-        starting_portfolio=starting_portfolio_p25,
-        annual_withdrawal_base=annual_withdrawal_base,
-        years_in_retirement=years_in_retirement,
-        expected_return=params["rentabilidad_neta_simulacion"],
-        inflation_rate=params["inflacion"],
-        tax_rate_on_gains=tax_rate_hint,
-    )
-    dec_df_p50 = build_decumulation_table(
-        starting_portfolio=starting_portfolio_p50,
-        annual_withdrawal_base=annual_withdrawal_base,
-        years_in_retirement=years_in_retirement,
-        expected_return=params["rentabilidad_neta_simulacion"],
-        inflation_rate=params["inflacion"],
-        tax_rate_on_gains=tax_rate_hint,
-    )
+    dec_tables: Dict[str, pd.DataFrame] = {}
+    for label, start_portfolio in starting_portfolios.items():
+        dec_tables[label] = build_decumulation_table(
+            starting_portfolio=start_portfolio,
+            annual_withdrawal_base=annual_withdrawal_base,
+            years_in_retirement=years_in_retirement,
+            expected_return=params["rentabilidad_neta_simulacion"],
+            inflation_rate=params["inflacion"],
+            tax_rate_on_gains=tax_rate_hint,
+        )
 
-    col_a, col_b, col_c, col_d = st.columns(4)
-    depletion_p25 = dec_df_p25[dec_df_p25["Capital agotado"]]
-    depletion_p50 = dec_df_p50[dec_df_p50["Capital agotado"]]
-    depletion_text_p25 = f"Año {int(depletion_p25.iloc[0]['Año jubilación'])}" if not depletion_p25.empty else "No en horizonte"
-    depletion_text_p50 = f"Año {int(depletion_p50.iloc[0]['Año jubilación'])}" if not depletion_p50.empty else "No en horizonte"
+    depletion_texts: Dict[str, str] = {}
+    for label, dec_df in dec_tables.items():
+        depletion_df = dec_df[dec_df["Capital agotado"]]
+        depletion_texts[label] = (
+            f"Año {int(depletion_df.iloc[0]['Año jubilación'])}"
+            if not depletion_df.empty
+            else "No en horizonte"
+        )
 
-    col_a.metric("Capital inicio (P25)", f"€{starting_portfolio_p25:,.0f}")
-    col_b.metric("Capital inicio (P50)", f"€{starting_portfolio_p50:,.0f}")
-    col_c.metric("Agotamiento P25", depletion_text_p25)
-    col_d.metric("Agotamiento P50", depletion_text_p50)
+    start_cols = st.columns(5)
+    for col, label in zip(start_cols, percentile_series.keys()):
+        col.metric(f"Capital inicio ({label})", f"€{starting_portfolios[label]:,.0f}")
 
     col_e, col_f = st.columns(2)
     col_e.metric("Retirada anual inicial", f"€{annual_withdrawal_base:,.0f}")
-    col_f.metric("Diferencia capital inicial (P50 - P25)", f"€{(starting_portfolio_p50 - starting_portfolio_p25):,.0f}")
+    col_f.metric(
+        "Diferencia capital inicial (P95 - P5)",
+        f"€{(starting_portfolios['P95'] - starting_portfolios['P5']):,.0f}",
+    )
 
-    tabs = st.tabs(["Escenario conservador (P25)", "Escenario base (P50)"])
-    with tabs[0]:
-        st.dataframe(
-            dec_df_p25.style.format(
-                {
-                    "Capital inicial (€)": "€{:,.0f}",
-                    "Retirada anual (€)": "€{:,.0f}",
-                    "Crecimiento neto (€)": "€{:,.0f}",
-                    "Capital final (€)": "€{:,.0f}",
-                }
-            ),
-            width="stretch",
-            hide_index=True,
-        )
-    with tabs[1]:
-        st.dataframe(
-            dec_df_p50.style.format(
-                {
-                    "Capital inicial (€)": "€{:,.0f}",
-                    "Retirada anual (€)": "€{:,.0f}",
-                    "Crecimiento neto (€)": "€{:,.0f}",
-                    "Capital final (€)": "€{:,.0f}",
-                }
-            ),
-            width="stretch",
-            hide_index=True,
-        )
+    depletion_cols = st.columns(5)
+    for col, label in zip(depletion_cols, percentile_series.keys()):
+        col.metric(f"Agotamiento {label}", depletion_texts[label])
+
+    tab_labels = [
+        "Escenario muy adverso (P5)",
+        "Escenario conservador (P25)",
+        "Escenario base (P50)",
+        "Escenario favorable (P75)",
+        "Escenario muy favorable (P95)",
+    ]
+    tabs = st.tabs(tab_labels)
+    for tab, label in zip(tabs, percentile_series.keys()):
+        with tab:
+            st.dataframe(
+                dec_tables[label].style.format(
+                    {
+                        "Capital inicial (€)": "€{:,.0f}",
+                        "Retirada anual (€)": "€{:,.0f}",
+                        "Crecimiento neto (€)": "€{:,.0f}",
+                        "Capital final (€)": "€{:,.0f}",
+                    }
+                ),
+                width="stretch",
+                hide_index=True,
+            )
 
     with st.expander("Supuestos del cuadro de gasto de capital", expanded=False):
         st.write(
-            f"- Capital inicial: percentiles 25 y 50 al final del horizonte de acumulación.\n"
+            "- Capital inicial: percentiles 5, 25, 50, 75 y 95 al final del horizonte de acumulación.\n"
             f"- Retirada base anual: €{annual_withdrawal_base:,.0f} (se actualiza por inflación).\n"
             f"- Retorno anual usado: {params['rentabilidad_neta_simulacion']*100:.2f}%.\n"
             f"- Impuesto orientativo sobre crecimiento: {tax_rate_hint*100:.1f}%.\n"
