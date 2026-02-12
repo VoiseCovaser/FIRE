@@ -1563,7 +1563,19 @@ def render_main_chart(simulation_results: Dict, params: Dict) -> None:
         yaxis=dict(tickformat=",.0f"),
     )
 
-    st.plotly_chart(fig, width="stretch", config={"responsive": True})
+    model_key = (
+        simulation_results.get("model_name", params.get("simulation_model", "model"))
+        .lower()
+        .replace(" ", "_")
+        .replace("(", "")
+        .replace(")", "")
+    )
+    st.plotly_chart(
+        fig,
+        width="stretch",
+        config={"responsive": True},
+        key=f"main_chart_{model_key}",
+    )
     if params.get("modo_guiado", False):
         st.caption(
             "Lectura rápida: línea azul = escenario central. Banda ancha = incertidumbre. "
@@ -1613,7 +1625,19 @@ def render_success_distribution_chart(simulation_results: Dict, params: Dict) ->
         showlegend=False,
     )
 
-    st.plotly_chart(fig, width="stretch", config={"responsive": True})
+    model_key = (
+        simulation_results.get("model_name", params.get("simulation_model", "model"))
+        .lower()
+        .replace(" ", "_")
+        .replace("(", "")
+        .replace(")", "")
+    )
+    st.plotly_chart(
+        fig,
+        width="stretch",
+        config={"responsive": True},
+        key=f"success_chart_{model_key}",
+    )
     if params.get("modo_guiado", False):
         st.caption(
             "Cada barra muestra la probabilidad acumulada de haber alcanzado FIRE en ese año."
