@@ -195,6 +195,78 @@ def calculate_savings_tax_with_details(savings_base: float, tax_pack: Dict, regi
     return breakdown
 
 
+def calculate_general_tax(general_base: float, tax_pack: Dict, region: str) -> float:
+    """Annual IRPF general tax approximation based on region.
+
+    Common regime:
+    - Applies approximate personal allowance from tax pack.
+    - Computes state + autonomous progressive quota.
+
+    Foral regime (Navarra / Basque territories):
+    - Uses foral brackets by region.
+    - Applies approximate personal allowance and quota reduction when available.
+    """
+    details = calculate_general_tax_with_details(general_base, tax_pack, region)
+    return float(details["tax"])
+
+
+def calculate_general_tax_with_details(general_base: float, tax_pack: Dict, region: str) -> Dict[str, Any]:
+    """Annual IRPF general tax with breakdown trace."""
+    income = max(0.0, float(general_base))
+    irpf = tax_pack.get("irpf", {})
+
+    common_allowance = irpf.get("personalAllowanceApprox", {})
+    default_allowance = float(common_allowance.get("base", 0.0))
+
+    foral = irpf.get("foral", {})
+    foral_brackets = foral.get("bracketsByRegion", {}).get(region)
+    foral_allowance = foral.get("personalAllowanceApproxByRegion", {}).get(region, {})
+    allowance = float(foral_allowance.get("base", default_allowance))
+    taxable_base = max(0.0, income - allowance)
+
+    if foral_brackets:
+        foral_breakdown = _progressive_tax_with_breakdown(taxable_base, foral_brackets)
+        quota_reduction = float(foral.get("quotaReductionByRegion", {}).get(region, 0.0))
+        gross_tax = float(foral_breakdown["tax"])
+        net_tax = max(0.0, gross_tax - max(0.0, quota_reduction))
+        return {
+            "system": "foral",
+            "region": region,
+            "income_base": income,
+            "personal_allowance_applied": allowance,
+            "taxable_base": taxable_base,
+            "state_breakdown": {"taxable_base": 0.0, "lines": [], "tax": 0.0},
+            "autonomous_breakdown": {"taxable_base": 0.0, "lines": [], "tax": 0.0},
+            "foral_breakdown": foral_breakdown,
+            "quota_reduction": quota_reduction,
+            "tax_gross": gross_tax,
+            "tax": net_tax,
+        }
+
+    state_brackets = irpf.get("general", {}).get("stateBrackets", [])
+    autonomous_brackets = (
+        irpf.get("general", {})
+        .get("autonomousBracketsByRegion", {})
+        .get(region, [])
+    )
+    state_breakdown = _progressive_tax_with_breakdown(taxable_base, state_brackets)
+    autonomous_breakdown = _progressive_tax_with_breakdown(taxable_base, autonomous_brackets)
+    tax_total = float(state_breakdown["tax"]) + float(autonomous_breakdown["tax"])
+    return {
+        "system": "common",
+        "region": region,
+        "income_base": income,
+        "personal_allowance_applied": allowance,
+        "taxable_base": taxable_base,
+        "state_breakdown": state_breakdown,
+        "autonomous_breakdown": autonomous_breakdown,
+        "foral_breakdown": {"taxable_base": 0.0, "lines": [], "tax": 0.0},
+        "quota_reduction": 0.0,
+        "tax_gross": tax_total,
+        "tax": tax_total,
+    }
+
+
 def calculate_wealth_taxes(investable_wealth: float, tax_pack: Dict, region: str) -> Dict[str, float]:
     """Approximate annual wealth taxes (IP + ISGF net of IP deduction).
 

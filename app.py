@@ -36,6 +36,7 @@ from src.tax_engine import (
     load_tax_pack,
     list_available_taxpack_years,
     get_region_options,
+    calculate_general_tax_with_details,
     calculate_savings_tax_with_details,
     calculate_wealth_taxes_with_details,
     validate_tax_pack_metadata,
@@ -1828,11 +1829,19 @@ def render_tax_trace(params: Dict, tax_pack: Optional[Dict]) -> None:
 
             for stage_name, net_from_portfolio, base_general in stage_inputs:
                 taxable_base_stage = max(0.0, net_from_portfolio * taxable_ratio)
+                general_stage = calculate_general_tax_with_details(
+                    base_general, tax_pack, params["region"]
+                )
                 savings_stage = calculate_savings_tax_with_details(
                     taxable_base_stage, tax_pack, params["region"]
                 )
                 wealth_stage = calculate_wealth_taxes_with_details(
                     ctx["target_portfolio_gross"], tax_pack, params["region"]
+                )
+                total_stage = (
+                    general_stage["tax"]
+                    + savings_stage["tax"]
+                    + wealth_stage["total_wealth_tax"]
                 )
                 stage_rows.append(
                     {
@@ -1842,9 +1851,10 @@ def render_tax_trace(params: Dict, tax_pack: Optional[Dict]) -> None:
                         "Retirada neta desde cartera (€)": net_from_portfolio,
                         "Ratio imponible ahorro (%)": taxable_ratio * 100,
                         "Base ahorro estimada (€)": taxable_base_stage,
+                        "IRPF base general estimado (€)": general_stage["tax"],
                         "IRPF ahorro estimado (€)": savings_stage["tax"],
                         "Patrimonio+ISGF estimado (€)": wealth_stage["total_wealth_tax"],
-                        "Fiscal anual total estimada (€)": savings_stage["tax"] + wealth_stage["total_wealth_tax"],
+                        "Fiscal anual total estimada (€)": total_stage,
                     }
                 )
 
@@ -1856,6 +1866,7 @@ def render_tax_trace(params: Dict, tax_pack: Optional[Dict]) -> None:
                         "Retirada neta desde cartera (€)": "€{:,.0f}",
                         "Ratio imponible ahorro (%)": "{:.1f}%",
                         "Base ahorro estimada (€)": "€{:,.0f}",
+                        "IRPF base general estimado (€)": "€{:,.0f}",
                         "IRPF ahorro estimado (€)": "€{:,.0f}",
                         "Patrimonio+ISGF estimado (€)": "€{:,.0f}",
                         "Fiscal anual total estimada (€)": "€{:,.0f}",
@@ -1866,7 +1877,7 @@ def render_tax_trace(params: Dict, tax_pack: Optional[Dict]) -> None:
             )
             st.caption(
                 "Base general (pensión y otras rentas) y base del ahorro (retirada tributable) se muestran separadas. "
-                "La cuota de IRPF base general no está modelada en este bloque aún; sí se modela IRPF del ahorro + Patrimonio/ISGF."
+                "En este bloque se estima IRPF base general + IRPF ahorro + Patrimonio/ISGF por tramo."
             )
         return
 
