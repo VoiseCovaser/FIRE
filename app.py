@@ -22,7 +22,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from typing import Dict, Tuple, List, Optional
+from typing import Dict, Tuple, List, Optional, Any
 import inspect
 from datetime import datetime
 import warnings
@@ -1800,6 +1800,73 @@ def render_tax_trace(params: Dict, tax_pack: Optional[Dict]) -> None:
             st.write(
                 f"IP neta estimada: €{wealth_detail['ip_tax']:,.0f} | "
                 f"ISGF neto estimado: €{wealth_detail['isgf_tax_net']:,.0f}."
+            )
+
+        with st.expander("Ver detalle anual por tramos (bases separadas)", expanded=False):
+            net_spending_base = float(params.get("gasto_anual_neto_cartera", params["gastos_anuales"]))
+            taxable_ratio = float(
+                params.get(
+                    "taxable_withdrawal_ratio_effective",
+                    params.get("taxable_withdrawal_ratio", 0.4),
+                )
+            )
+            use_two_stage = bool(
+                params.get("two_stage_retirement_model", False)
+                and params.get("include_pension_in_simulation", False)
+            )
+
+            stage_rows: List[Dict[str, Any]] = []
+            if use_two_stage:
+                pre_extra = float(params.get("coste_pre_pension_anual", 0.0))
+                pension_net = float(params.get("pension_neta_anual", 0.0))
+                stage_inputs = [
+                    ("Pre-pensión", net_spending_base + pre_extra, 0.0),
+                    ("Post-pensión", max(0.0, net_spending_base - pension_net), pension_net),
+                ]
+            else:
+                stage_inputs = [("Retiro (único tramo)", net_spending_base, 0.0)]
+
+            for stage_name, net_from_portfolio, base_general in stage_inputs:
+                taxable_base_stage = max(0.0, net_from_portfolio * taxable_ratio)
+                savings_stage = calculate_savings_tax_with_details(
+                    taxable_base_stage, tax_pack, params["region"]
+                )
+                wealth_stage = calculate_wealth_taxes_with_details(
+                    ctx["target_portfolio_gross"], tax_pack, params["region"]
+                )
+                stage_rows.append(
+                    {
+                        "Tramo": stage_name,
+                        "Gasto neto objetivo (€)": net_spending_base,
+                        "Base general estimada (€)": base_general,
+                        "Retirada neta desde cartera (€)": net_from_portfolio,
+                        "Ratio imponible ahorro (%)": taxable_ratio * 100,
+                        "Base ahorro estimada (€)": taxable_base_stage,
+                        "IRPF ahorro estimado (€)": savings_stage["tax"],
+                        "Patrimonio+ISGF estimado (€)": wealth_stage["total_wealth_tax"],
+                        "Fiscal anual total estimada (€)": savings_stage["tax"] + wealth_stage["total_wealth_tax"],
+                    }
+                )
+
+            st.dataframe(
+                pd.DataFrame(stage_rows).style.format(
+                    {
+                        "Gasto neto objetivo (€)": "€{:,.0f}",
+                        "Base general estimada (€)": "€{:,.0f}",
+                        "Retirada neta desde cartera (€)": "€{:,.0f}",
+                        "Ratio imponible ahorro (%)": "{:.1f}%",
+                        "Base ahorro estimada (€)": "€{:,.0f}",
+                        "IRPF ahorro estimado (€)": "€{:,.0f}",
+                        "Patrimonio+ISGF estimado (€)": "€{:,.0f}",
+                        "Fiscal anual total estimada (€)": "€{:,.0f}",
+                    }
+                ),
+                width="stretch",
+                hide_index=True,
+            )
+            st.caption(
+                "Base general (pensión y otras rentas) y base del ahorro (retirada tributable) se muestran separadas. "
+                "La cuota de IRPF base general no está modelada en este bloque aún; sí se modela IRPF del ahorro + Patrimonio/ISGF."
             )
         return
 
