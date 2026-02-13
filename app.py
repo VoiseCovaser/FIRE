@@ -375,6 +375,11 @@ def validate_inputs(params: Dict) -> Tuple[bool, List[str]]:
     if params["aportacion_mensual"] > max_monthly:
         errors.append(f"❌ Aportación mensual máxima: €{max_monthly:,.0f}")
 
+    if params.get("two_stage_retirement_model") and params.get("edad_pension_oficial", 67) < params["edad_objetivo"]:
+        warnings.append(
+            "⚠️  Edad de pensión menor que edad objetivo FIRE. El tramo pre-pensión quedará en 0 años."
+        )
+
     return len(errors) == 0, errors + warnings
 
 
@@ -672,6 +677,53 @@ def build_decumulation_table(
     return pd.DataFrame(rows)
 
 
+def build_decumulation_table_two_stage(
+    starting_portfolio: float,
+    annual_withdrawal_stage1: float,
+    annual_withdrawal_stage2: float,
+    stage1_years: int,
+    years_in_retirement: int,
+    expected_return: float,
+    inflation_rate: float,
+    tax_rate_on_gains: float,
+) -> pd.DataFrame:
+    """Build decumulation table with two retirement stages.
+
+    Stage 1: pre-pension withdrawals (typically higher).
+    Stage 2: post-pension net withdrawals from portfolio (typically lower).
+    """
+    rows: List[Dict[str, float]] = []
+    portfolio = float(max(0.0, starting_portfolio))
+    inflation_factor = 1.0
+
+    for year in range(1, years_in_retirement + 1):
+        tramo = "Pre-pensión" if year <= stage1_years else "Post-pensión"
+        retirada_base = annual_withdrawal_stage1 if year <= stage1_years else annual_withdrawal_stage2
+        capital_inicial = portfolio
+        retirada = retirada_base * inflation_factor
+        growth_gross = capital_inicial * expected_return
+        tax_growth = max(0.0, growth_gross) * max(0.0, tax_rate_on_gains)
+        growth_net = growth_gross - tax_growth
+        capital_final = max(0.0, capital_inicial + growth_net - retirada)
+
+        rows.append(
+            {
+                "Año jubilación": year,
+                "Tramo": tramo,
+                "Capital inicial (€)": capital_inicial,
+                "Retirada anual (€)": retirada,
+                "Crecimiento neto (€)": growth_net,
+                "Capital final (€)": capital_final,
+                "Capital agotado": capital_final <= 0,
+            }
+        )
+
+        portfolio = capital_final
+        inflation_factor *= (1 + inflation_rate)
+
+    return pd.DataFrame(rows)
+
+
 def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
     """Render retirement capital-spending table."""
     st.subheader("🪙 Gasto de capital en jubilación")
@@ -702,17 +754,45 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
     }
     annual_withdrawal_base = float(params.get("annual_spending_for_target", params["gastos_anuales"]))
     tax_rate_hint = 0.19 if params["regimen_fiscal"] in ("España - Fondos de Inversión", "España - Cartera Directa") else 0.15
+    two_stage_enabled = params.get("two_stage_retirement_model", False)
+    stage1_years = 0
+    annual_withdrawal_stage1 = annual_withdrawal_base
+    annual_withdrawal_stage2 = annual_withdrawal_base
+    if two_stage_enabled:
+        fire_age = params["edad_objetivo"]
+        pension_age = params.get("edad_pension_oficial", 67)
+        stage1_years = max(0, pension_age - fire_age)
+        annual_withdrawal_stage1 = max(
+            0.0,
+            annual_withdrawal_base + params.get("coste_pre_pension_anual", 0.0),
+        )
+        annual_withdrawal_stage2 = max(
+            0.0,
+            annual_withdrawal_base - params.get("pension_neta_anual", 0.0),
+        )
 
     dec_tables: Dict[str, pd.DataFrame] = {}
     for label, start_portfolio in starting_portfolios.items():
-        dec_tables[label] = build_decumulation_table(
-            starting_portfolio=start_portfolio,
-            annual_withdrawal_base=annual_withdrawal_base,
-            years_in_retirement=years_in_retirement,
-            expected_return=params["rentabilidad_neta_simulacion"],
-            inflation_rate=params["inflacion"],
-            tax_rate_on_gains=tax_rate_hint,
-        )
+        if two_stage_enabled:
+            dec_tables[label] = build_decumulation_table_two_stage(
+                starting_portfolio=start_portfolio,
+                annual_withdrawal_stage1=annual_withdrawal_stage1,
+                annual_withdrawal_stage2=annual_withdrawal_stage2,
+                stage1_years=stage1_years,
+                years_in_retirement=years_in_retirement,
+                expected_return=params["rentabilidad_neta_simulacion"],
+                inflation_rate=params["inflacion"],
+                tax_rate_on_gains=tax_rate_hint,
+            )
+        else:
+            dec_tables[label] = build_decumulation_table(
+                starting_portfolio=start_portfolio,
+                annual_withdrawal_base=annual_withdrawal_base,
+                years_in_retirement=years_in_retirement,
+                expected_return=params["rentabilidad_neta_simulacion"],
+                inflation_rate=params["inflacion"],
+                tax_rate_on_gains=tax_rate_hint,
+            )
 
     depletion_texts: Dict[str, str] = {}
     for label, dec_df in dec_tables.items():
@@ -762,13 +842,24 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
             )
 
     with st.expander("Supuestos del cuadro de gasto de capital", expanded=False):
-        st.write(
-            "- Capital inicial: percentiles 5, 25, 50, 75 y 95 al final del horizonte de acumulación.\n"
-            f"- Retirada base anual: €{annual_withdrawal_base:,.0f} (se actualiza por inflación).\n"
-            f"- Retorno anual usado: {params['rentabilidad_neta_simulacion']*100:.2f}%.\n"
-            f"- Impuesto orientativo sobre crecimiento: {tax_rate_hint*100:.1f}%.\n"
-            "- Es una aproximación para planificación; no sustituye un plan de retiro personalizado."
-        )
+        if two_stage_enabled:
+            st.write(
+                "- Capital inicial: percentiles 5, 25, 50, 75 y 95 al final del horizonte de acumulación.\n"
+                f"- Tramo pre-pensión: {stage1_years} años con retirada base de €{annual_withdrawal_stage1:,.0f}/año.\n"
+                f"- Tramo post-pensión: retirada neta de cartera de €{annual_withdrawal_stage2:,.0f}/año.\n"
+                "- Ambos tramos se actualizan por inflación año a año.\n"
+                f"- Retorno anual usado: {params['rentabilidad_neta_simulacion']*100:.2f}%.\n"
+                f"- Impuesto orientativo sobre crecimiento: {tax_rate_hint*100:.1f}%.\n"
+                "- Es una aproximación para planificación; no sustituye un plan de retiro personalizado."
+            )
+        else:
+            st.write(
+                "- Capital inicial: percentiles 5, 25, 50, 75 y 95 al final del horizonte de acumulación.\n"
+                f"- Retirada base anual: €{annual_withdrawal_base:,.0f} (se actualiza por inflación).\n"
+                f"- Retorno anual usado: {params['rentabilidad_neta_simulacion']*100:.2f}%.\n"
+                f"- Impuesto orientativo sobre crecimiento: {tax_rate_hint*100:.1f}%.\n"
+                "- Es una aproximación para planificación; no sustituye un plan de retiro personalizado."
+            )
 
 
 # =====================================================================
@@ -1204,6 +1295,46 @@ def render_sidebar() -> Dict:
             "Nota: se usa renta bruta como aproximación. No modela en detalle gastos deducibles, vacancia ni IRPF inmobiliario."
         )
 
+    with st.sidebar.expander("🧓 Modelo de retiro en 2 tramos (opcional)", expanded=False):
+        two_stage_retirement_model = st.checkbox(
+            "Activar tramo pre-pensión y tramo post-pensión",
+            value=False,
+            help=(
+                "Permite modelar una etapa desde FIRE hasta la edad de pensión con retirada más alta "
+                "y otra etapa posterior con menor retirada de cartera por efecto de la pensión."
+            ),
+        )
+        edad_pension_oficial = st.slider(
+            "Edad de pensión",
+            min_value=50,
+            max_value=100,
+            value=67,
+            step=1,
+            disabled=not two_stage_retirement_model,
+        )
+        pension_neta_anual = st.number_input(
+            "Pensión neta anual esperada (€ de hoy)",
+            min_value=0,
+            max_value=200_000,
+            value=0,
+            step=1_000,
+            disabled=not two_stage_retirement_model,
+        )
+        coste_pre_pension_anual = st.number_input(
+            "Coste anual extra pre-pensión (€ de hoy)",
+            min_value=0,
+            max_value=200_000,
+            value=0,
+            step=500,
+            disabled=not two_stage_retirement_model,
+            help="Ejemplo: coste de cotizaciones voluntarias o gasto adicional temporal antes de pensión.",
+        )
+        if two_stage_retirement_model:
+            st.caption(
+                "En decumulación, tramo 1 = FIRE→pensión; tramo 2 = post-pensión. "
+                "La pensión reduce la retirada que debe cubrir la cartera."
+            )
+
     st.sidebar.divider()
 
     # STEP 4: Market assumptions
@@ -1416,6 +1547,10 @@ def render_sidebar() -> Dict:
         "usar_capital_invertible_ampliado": usar_capital_invertible_ampliado,
         "renta_bruta_alquiler_anual": renta_bruta_alquiler_anual,
         "incluir_rentas_alquiler_en_simulacion": incluir_rentas_alquiler_en_simulacion,
+        "two_stage_retirement_model": two_stage_retirement_model,
+        "edad_pension_oficial": edad_pension_oficial,
+        "pension_neta_anual": pension_neta_anual,
+        "coste_pre_pension_anual": coste_pre_pension_anual,
         # Compatibilidad con lógica previa
         "usar_patrimonio_neto_en_simulacion": usar_capital_invertible_ampliado,
         "net_worth_data": net_worth_data,
