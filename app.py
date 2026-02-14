@@ -1423,13 +1423,16 @@ def render_sidebar() -> Dict:
             help="Permite retrasar la pensión pública respecto a la edad legal.",
         )
         bonificacion_demora_pct = st.slider(
-            "Bonificación anual por demora de pensión pública (%)",
+            "Ajuste anual por anticipo/demora de pensión pública (%)",
             min_value=0.0,
             max_value=8.0,
             value=4.0,
             step=0.5,
             disabled=not include_pension_in_simulation,
-            help="Porcentaje anual acumulado por cada año de demora de la pensión pública.",
+            help=(
+                "Se aplica por cada año de diferencia entre edad legal e inicio real. "
+                "Si inicias antes, el ajuste total será negativo; si inicias después, positivo."
+            ),
         ) / 100.0
         pension_publica_neta_anual = st.number_input(
             "Pensión pública neta anual esperada (€ de hoy)",
@@ -1439,13 +1442,18 @@ def render_sidebar() -> Dict:
             step=1_000,
             disabled=not include_pension_in_simulation,
         )
-        years_delay = max(0, edad_inicio_pension_publica - edad_pension_oficial)
-        pension_publica_neta_anual_efectiva = pension_publica_neta_anual * (
-            1 + (bonificacion_demora_pct * years_delay)
+        years_delta = edad_inicio_pension_publica - edad_pension_oficial
+        pension_publica_neta_anual_efectiva = max(
+            0.0,
+            pension_publica_neta_anual * (1 + (bonificacion_demora_pct * years_delta)),
         )
-        if include_pension_in_simulation and years_delay > 0:
+        if include_pension_in_simulation and years_delta > 0:
             st.caption(
-                f"Pensión pública ajustada por demora ({years_delay} años): €{pension_publica_neta_anual_efectiva:,.0f}/año."
+                f"Pensión pública ajustada por demora ({years_delta} años): €{pension_publica_neta_anual_efectiva:,.0f}/año."
+            )
+        elif include_pension_in_simulation and years_delta < 0:
+            st.caption(
+                f"Pensión pública ajustada por anticipo ({abs(years_delta)} años): €{pension_publica_neta_anual_efectiva:,.0f}/año."
             )
         elif include_pension_in_simulation:
             st.caption(
