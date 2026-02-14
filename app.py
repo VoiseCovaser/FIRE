@@ -1200,6 +1200,23 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                 tax_rate_on_gains=tax_rate_hint,
             )
 
+    rental_income_base = (
+        float(params.get("renta_neta_alquiler_anual_efectiva", 0.0))
+        if params.get("incluir_rentas_alquiler_en_simulacion", False)
+        else 0.0
+    )
+    if rental_income_base > 0:
+        for label, dec_df in dec_tables.items():
+            if dec_df.empty:
+                continue
+            dec_tables[label] = dec_df.assign(
+                **{
+                    "Ingreso alquileres (€)": dec_df["Año jubilación"].apply(
+                        lambda y: rental_income_base * ((1 + params["inflacion"]) ** max(0, int(y) - 1))
+                    )
+                }
+            )
+
     depletion_texts: Dict[str, str] = {}
     for label, dec_df in dec_tables.items():
         depletion_df = dec_df[dec_df["Capital agotado"]]
@@ -1213,12 +1230,32 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
     for col, label in zip(start_cols, percentile_series.keys()):
         col.metric(f"Capital inicio ({label})", f"€{starting_portfolios[label]:,.0f}")
 
+    end_capitals = {
+        label: float(dec_tables[label].iloc[-1]["Capital final (€)"]) if not dec_tables[label].empty else 0.0
+        for label in percentile_series.keys()
+    }
+    end_cols = st.columns(5)
+    for col, label in zip(end_cols, percentile_series.keys()):
+        delta_vs_start = end_capitals[label] - starting_portfolios[label]
+        col.metric(
+            f"Capital final ({label})",
+            f"€{end_capitals[label]:,.0f}",
+            delta=f"{delta_vs_start:+,.0f} € vs inicio",
+            delta_color="normal",
+        )
+
     col_e, col_f = st.columns(2)
     retirada_inicial = float(dec_tables["P50"].iloc[0]["Retirada anual (€)"]) if not dec_tables["P50"].empty else 0.0
-    col_e.metric("Retirada anual inicial", f"€{retirada_inicial:,.0f}")
+    retirada_final = float(dec_tables["P50"].iloc[-1]["Retirada anual (€)"]) if not dec_tables["P50"].empty else 0.0
+    col_e.metric(
+        "Retirada anual P50 (inicio → fin)",
+        f"€{retirada_inicial:,.0f}",
+        delta=f"Fin: €{retirada_final:,.0f}",
+        delta_color="off",
+    )
     col_f.metric(
-        "Diferencia capital inicial (P95 - P5)",
-        f"€{(starting_portfolios['P95'] - starting_portfolios['P5']):,.0f}",
+        "Diferencia capital final (P95 - P5)",
+        f"€{(end_capitals['P95'] - end_capitals['P5']):,.0f}",
     )
 
     depletion_cols = st.columns(5)
@@ -1256,12 +1293,25 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                     - dec_display_df["Retirada anual (€)"]
                     - dec_display_df["Capital final (€)"]
                 )
+                # If capital is exhausted and clamped to 0, negative residual is unmet withdrawal,
+                # not a modeling mismatch. Split it to avoid false "descuadre" alarms.
+                dec_display_df["Déficit no cubierto (€)"] = np.where(
+                    dec_display_df["Capital agotado"],
+                    dec_display_df["Chequeo flujo (€)"],
+                    0.0,
+                )
+                dec_display_df["Chequeo flujo (€)"] = np.where(
+                    dec_display_df["Capital agotado"],
+                    0.0,
+                    dec_display_df["Chequeo flujo (€)"],
+                )
 
             base_order = [
                 "Año jubilación",
                 "Edad",
                 "Tramo",
                 "Capital inicial (€)",
+                "Ingreso alquileres (€)",
                 "Ingreso pensión pública (€)",
                 "Ingreso plan privado (€)",
                 "Otras rentas (€)",
@@ -1270,6 +1320,7 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                 "Crecimiento neto (€)",
                 "Capital final (€)",
                 "Chequeo flujo (€)",
+                "Déficit no cubierto (€)",
                 "Capital agotado",
             ]
             ordered_cols = [c for c in base_order if c in dec_display_df.columns]
@@ -1281,8 +1332,10 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                 "Crecimiento neto (€)": "€{:,.0f}",
                 "Capital final (€)": "€{:,.0f}",
                 "Chequeo flujo (€)": "€{:,.2f}",
+                "Déficit no cubierto (€)": "€{:,.2f}",
             }
             for optional_col in (
+                "Ingreso alquileres (€)",
                 "Ingreso pensión pública (€)",
                 "Ingreso plan privado (€)",
                 "Otras rentas (€)",
@@ -1303,6 +1356,21 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                     )
                 else:
                     st.caption("Chequeo de flujo OK: columnas de capital/retiro/cuadre son coherentes.")
+
+            if rental_income_base > 0:
+                st.caption(
+                    "El ingreso por alquiler se muestra por transparencia y ya está incorporado en el "
+                    "gasto neto desde cartera usado para calcular la retirada."
+                )
+                gasto_hoy = float(params.get("gastos_anuales", 0.0))
+                ahorro_viv_hoy = float(params.get("ahorro_vivienda_habitual_anual_efectivo", 0.0))
+                hip_post_hoy = float(params.get("cuota_post_fire_hipotecas_mensual_efectiva", 0.0)) * 12.0
+                neto_cartera_hoy = max(0.0, gasto_hoy - rental_income_base - ahorro_viv_hoy + hip_post_hoy)
+                st.caption(
+                    f"Referencia (euros de hoy): gasto €{gasto_hoy:,.0f} - alquiler €{rental_income_base:,.0f} "
+                    f"- ahorro vivienda €{ahorro_viv_hoy:,.0f} + hipoteca post-FIRE €{hip_post_hoy:,.0f} "
+                    f"= necesidad neta desde cartera €{neto_cartera_hoy:,.0f} (antes de ajustes fiscales de retirada)."
+                )
 
     with st.expander("Supuestos del cuadro de gasto de capital", expanded=False):
         cagr_text = (
@@ -2099,11 +2167,13 @@ def render_sidebar() -> Dict:
         include_pension_in_simulation = st.checkbox(
             "Incluir planes/pensión en simulación",
             value=False,
+            key="include_pension_in_simulation_key",
             help="Si está desactivado, la simulación no tendrá en cuenta pensión ni planes.",
         )
         two_stage_retirement_model = st.checkbox(
             "Activar tramo pre-pensión y tramo post-pensión",
             value=False,
+            key="two_stage_retirement_model_key",
             disabled=not include_pension_in_simulation,
             help=(
                 "Permite modelar una etapa desde FIRE hasta la edad de pensión con retirada más alta "
@@ -2116,6 +2186,7 @@ def render_sidebar() -> Dict:
             max_value=100,
             value=67,
             step=1,
+            key="edad_pension_oficial_key",
             disabled=not include_pension_in_simulation,
         )
         edad_inicio_pension_publica = st.slider(
@@ -2124,6 +2195,7 @@ def render_sidebar() -> Dict:
             max_value=100,
             value=67,
             step=1,
+            key="edad_inicio_pension_publica_key",
             disabled=not include_pension_in_simulation,
             help="Permite retrasar la pensión pública respecto a la edad legal.",
         )
@@ -2133,6 +2205,7 @@ def render_sidebar() -> Dict:
             max_value=8.0,
             value=4.0,
             step=0.5,
+            key="bonificacion_demora_pct_key",
             disabled=not include_pension_in_simulation,
             help=(
                 "Se aplica por cada año de diferencia entre edad legal e inicio real. "
@@ -2145,6 +2218,7 @@ def render_sidebar() -> Dict:
             max_value=200_000,
             value=0,
             step=1_000,
+            key="pension_publica_neta_anual_key",
             disabled=not include_pension_in_simulation,
         )
         years_delta = edad_inicio_pension_publica - edad_pension_oficial
@@ -2173,6 +2247,7 @@ def render_sidebar() -> Dict:
             max_value=100,
             value=63,
             step=1,
+            key="edad_inicio_plan_privado_key",
             disabled=not include_pension_in_simulation,
             help="Permite rescatar plan privado antes o después de la pensión pública.",
         )
@@ -2182,6 +2257,7 @@ def render_sidebar() -> Dict:
             max_value=40,
             value=0,
             step=1,
+            key="duracion_plan_privado_anos_key",
             disabled=not include_pension_in_simulation,
             help="Años durante los que se cobra el plan privado (0 = no se cobra).",
         )
@@ -2191,6 +2267,7 @@ def render_sidebar() -> Dict:
             max_value=200_000,
             value=0,
             step=1_000,
+            key="plan_pensiones_privado_neto_anual_key",
             disabled=not include_pension_in_simulation,
         )
         otras_rentas_post_jubilacion_netas = st.number_input(
@@ -2199,6 +2276,7 @@ def render_sidebar() -> Dict:
             max_value=200_000,
             value=0,
             step=500,
+            key="otras_rentas_post_jubilacion_netas_key",
             disabled=not include_pension_in_simulation,
             help="Ingresos recurrentes netos esperados que reduzcan la retirada de cartera.",
         )
@@ -2215,6 +2293,7 @@ def render_sidebar() -> Dict:
             max_value=200_000,
             value=0,
             step=500,
+            key="coste_pre_pension_anual_key",
             disabled=not include_pension_in_simulation or not two_stage_retirement_model,
             help=(
                 "No está ligado al rescate del plan privado. "
@@ -3623,25 +3702,6 @@ def render_export_options(simulation_results: Dict, params: Dict) -> None:
 
 def main():
     """Main application flow"""
-
-    if "sidebar_visible" not in st.session_state:
-        st.session_state["sidebar_visible"] = True
-
-    top_left, _top_right = st.columns([1, 5])
-    with top_left:
-        toggle_label = "Ocultar panel" if st.session_state["sidebar_visible"] else "Mostrar panel"
-        if st.button(toggle_label, key="toggle_sidebar_visibility", width="stretch"):
-            st.session_state["sidebar_visible"] = not st.session_state["sidebar_visible"]
-
-    if not st.session_state["sidebar_visible"]:
-        st.markdown(
-            """
-            <style>
-            section[data-testid="stSidebar"] {display: none !important;}
-            </style>
-            """,
-            unsafe_allow_html=True,
-        )
 
     # Header
     st.title("📈 Calculadora FIRE - Calculadora de Independencia Financiera")

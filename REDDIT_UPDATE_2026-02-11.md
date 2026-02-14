@@ -1,48 +1,76 @@
-# Update del proyecto FIRE (14 Feb 2026)
+🚀 **ACTUALIZACIÓN 14 FEBRERO 2026 (Web + motor de simulación)**
 
-Gracias por todo el feedback del hilo. Esta iteración se ha centrado en precisión del modelo, UX y estabilidad web.
+Gracias por todo el feedback del hilo. Esta ronda ha sido de **precisión de cálculo + UX + estabilidad**.
 
-## Cambios ya implementados
+## ✅ Qué se ha implementado
 
-1. Inputs y UX (web)
-- Inputs exactos en campos clave de importe (patrimonio, aportación, cuotas), ocultando la barra cuando activas modo exacto.
-- Carga de perfil JSON en sidebar (flujo de carga limpio y sin duplicar export).
-- Reordenación/pulido visual de panel y bloques de resultados.
-- Comparador A/B en resultados: guardas un escenario base y comparas contra el actual.
+### 1) UX y panel de control (web)
 
-2. Persistencia y exportes
-- Perfil y escenario exportables en JSON.
-- CSV mantenido para seguimiento.
-- Botón de imprimir/guardar PDF vía navegador estabilizado.
+* Inputs exactos en campos clave (patrimonio, aportación, cuotas), ocultando la barra cuando activas modo exacto.
+* Carga de perfil JSON en sidebar con flujo limpio.
+* Comparador **A/B** de escenarios en resultados.
+* Ajustes visuales y de legibilidad en bloques principales.
 
-3. Fiscalidad
-- Modo fiscal `España (Tax Pack)` + `Internacional básico`.
-- Ajuste del modelo internacional básico para evitar drag irreal (ya no resta el tipo como porcentaje anual de toda la cartera).
+### 2) Persistencia y exportes
 
-4. Simulación y backtesting
-- Monte Carlo normal + bootstrap histórico + backtesting histórico en ventanas.
-- Añadidos indicadores de fidelidad en backtesting (ventanas evaluadas, rango histórico y cobertura mensual).
-- En gráficos de backtesting: marcado de ventana crítica (peor) y favorable (mejor), con lectura de impacto.
-- KPI de riesgo de secuencia (brecha entre ventana crítica y favorable).
+* Export de perfil/escenario en JSON.
+* CSV mantenido para seguimiento histórico.
+* Botón de imprimir/guardar PDF estabilizado.
+* Corregida la persistencia de campos de pensión en JSON (carga/guardado consistente en web).
 
-5. Jubilación / gasto de capital
-- Tabla de gasto de capital con orden de columnas fijo y chequeo de flujo contable por fila.
-- Correcciones para alinear mejor escenarios P5–P95 y trazabilidad del retorno implícito usado por escenario.
-- Mini-KPI por pestaña con “retorno anual implícito usado”.
+### 3) Fiscalidad
 
-6. Robustez técnica
-- Correcciones de estados de Streamlit (incluyendo cargas de perfil y recálculo).
-- Corrección de bugs detectados moviendo sliders / interacciones rápidas.
-- Suite de tests ampliada en módulos fiscales, perfiles y modelos.
+* Selector fiscal: **España (Tax Pack)** y **Internacional básico**.
+* Corregido el modelo internacional básico para evitar un drag irreal:
+  * ya no resta el tipo como % anual de toda la cartera,
+  * ahora aplica un enfoque más razonable sobre base de retorno.
 
-## Limitaciones que siguen vigentes
+### 4) Simulación y backtesting
 
-- Sigue siendo un simulador educativo de planificación, no asesoría fiscal/legal personalizada.
-- El modo internacional básico es una aproximación agregada (no sustituye un motor fiscal país-a-país).
-- Faltan más casos de validación externa para normativa fiscal regional y escenarios complejos de retiro.
+* Modelos activos:
+  * Monte Carlo normal,
+  * Monte Carlo bootstrap histórico,
+  * Backtesting histórico por ventanas móviles.
+* Añadidos indicadores de fidelidad del backtesting:
+  * número de ventanas,
+  * rango histórico cubierto,
+  * calidad de cobertura mensual.
+* En la gráfica:
+  * ventana crítica (peor),
+  * ventana favorable (mejor),
+  * KPI de riesgo de secuencia.
 
-## Próximos focos propuestos
+### 5) Gestión del capital en jubilación
 
-1. Mejorar precisión fiscal pre/post pensión con más casuísticas reales.
-2. Seguir reduciendo deuda técnica y complejidad de `app.py`/`src/cli.py`.
-3. Mayor paridad funcional CLI/web en bloques avanzados y pruebas end-to-end.
+* Orden de columnas fijado para evitar desajustes visuales.
+* Chequeo contable por fila (`capital inicial + crecimiento - retirada = capital final`).
+* Mini-KPI por pestaña con retorno implícito usado.
+* Correcciones de coherencia en escenarios P5/P25/P50/P75/P95.
+* KPI de jubilación ahora sí responde al slider de años proyectados.
+* Añadida columna de ingresos por alquiler en tabla de jubilación (con explicación de cómo impacta en retirada neta).
+* Separado “descuadre” de “déficit no cubierto” cuando el capital se agota, para evitar lecturas confusas.
+
+### 6) Robustez técnica
+
+* Correcciones de estado en Streamlit (carga de perfil + recálculo).
+* Corrección de bugs detectados con interacción rápida de sliders/inputs.
+* Ampliación de tests en fiscalidad, perfiles y modelos.
+* Refuerzo de stress tests en motores de simulación (normal/bootstrap/backtest) con invariantes numéricos.
+
+---
+
+## ⚠️ Limitaciones actuales (importantes)
+
+* Sigue siendo una herramienta educativa de planificación (no asesoría fiscal/legal personalizada).
+* El modo internacional básico sigue siendo una aproximación agregada.
+* Falta más validación externa en casuísticas fiscales complejas.
+
+---
+
+## 🔜 Próximos pasos
+
+1. Mejorar precisión fiscal pre/post pensión con casos reales.
+2. Reducir deuda técnica y complejidad de `app.py` y `src/cli.py`.
+3. Seguir cerrando paridad web/CLI con tests end-to-end.
+
+Si queréis, en la próxima iteración puedo publicar una **comparativa antes/después** con escenarios reales anonimizados para que se vea mejor el impacto de cada cambio.

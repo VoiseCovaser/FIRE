@@ -61,6 +61,8 @@ ALLOWED_PROFILE_KEYS = {
     "edad_inicio_pension_publica",
     "bonificacion_demora_pct",
     "pension_publica_neta_anual",
+    "pension_publica_neta_anual_efectiva",
+    "pension_neta_anual",
     "edad_inicio_plan_privado",
     "duracion_plan_privado_anos",
     "plan_pensiones_privado_neto_anual",
@@ -108,4 +110,3 @@ def deserialize_profile(payload: Dict[str, Any]) -> Tuple[Dict[str, Any], List[s
             warnings.append(f"Clave no reconocida ignorada: {key}")
 
     return safe_config, warnings
-
