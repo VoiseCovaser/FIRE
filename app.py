@@ -684,13 +684,13 @@ def render_final_narrative_summary(simulation_results: Dict, params: Dict) -> No
     )
 
 
-def build_ab_summary(simulation_results: Dict, params: Dict) -> Dict[str, Any]:
+def build_ab_summary(simulation_results: Dict, params: Dict, model_label: str) -> Dict[str, Any]:
     """Build a compact, comparable snapshot for A/B comparison."""
     fire_target = float(get_display_fire_target(simulation_results, params))
     years_horizon = int(params["edad_objetivo"] - params["edad_actual"])
     years_to_fire = find_years_to_fire(simulation_results["real_percentile_50"], fire_target)
     return {
-        "model": "Monte Carlo (Normal)",
+        "model": model_label,
         "years_horizon": years_horizon,
         "years_to_fire": years_to_fire,
         "success_rate_final": float(simulation_results.get("success_rate_final", 0.0)),
@@ -700,7 +700,7 @@ def build_ab_summary(simulation_results: Dict, params: Dict) -> Dict[str, Any]:
     }
 
 
-def render_ab_comparator(current_results: Dict, params: Dict) -> None:
+def render_ab_comparator(simulation_results_by_model: Dict[str, Dict], params: Dict) -> None:
     """Render A/B comparator: baseline scenario A vs current scenario B."""
     st.markdown("### 🆚 Comparador A/B (escenario guardado vs actual)")
     st.markdown(
@@ -712,14 +712,62 @@ def render_ab_comparator(current_results: Dict, params: Dict) -> None:
         unsafe_allow_html=True,
     )
 
+    model_options = list(simulation_results_by_model.keys())
+
+    # Apply deferred widget-state updates before widgets are instantiated.
+    pending_lock_model = st.session_state.pop("ab_pending_lock_model", None)
+    if pending_lock_model in model_options:
+        st.session_state["ab_lock_b_model_to_a"] = True
+        st.session_state["ab_current_model"] = pending_lock_model
+
+    baseline_summary = st.session_state.get("ab_baseline_summary")
+    baseline_model_candidate = (
+        baseline_summary.get("model", "Monte Carlo (Normal)")
+        if isinstance(baseline_summary, dict)
+        else "Monte Carlo (Normal)"
+    )
+
+    lock_to_baseline_model = st.checkbox(
+        "Bloquear modelo B al modelo guardado en A",
+        value=bool(st.session_state.get("ab_lock_b_model_to_a", False)),
+        key="ab_lock_b_model_to_a",
+        help=(
+            "Si está activo, B usa el mismo método de simulación que A. "
+            "Útil para comparar solo cambios de parámetros."
+        ),
+    )
+
+    default_b_model = st.session_state.get("ab_current_model", "Monte Carlo (Normal)")
+    if lock_to_baseline_model and baseline_model_candidate in model_options:
+        default_b_model = baseline_model_candidate
+    if default_b_model not in model_options:
+        default_b_model = model_options[0]
+
+    selected_b_model = st.selectbox(
+        "Modelo para escenario B (actual)",
+        options=model_options,
+        index=model_options.index(default_b_model),
+        key="ab_current_model",
+        help="Puedes comparar el mismo perfil con distintos métodos de simulación.",
+        disabled=lock_to_baseline_model and baseline_model_candidate in model_options,
+    )
+    current_results = simulation_results_by_model[selected_b_model]
+
     controls_col1, controls_col2 = st.columns(2)
     with controls_col1:
         if st.button("Guardar escenario actual como A", key="ab_save_baseline", width="stretch"):
             st.session_state["ab_baseline_params"] = serialize_profile(params)
-            st.session_state["ab_baseline_summary"] = build_ab_summary(current_results, params)
+            st.session_state["ab_baseline_summary"] = build_ab_summary(
+                current_results,
+                params,
+                selected_b_model,
+            )
             st.session_state["ab_baseline_created_at"] = datetime.now().isoformat(timespec="seconds")
-            st.session_state["ab_baseline_model"] = "Monte Carlo (Normal)"
+            st.session_state["ab_baseline_model"] = selected_b_model
+            # Defer widget-state mutation to next rerun (Streamlit widget-state rule).
+            st.session_state["ab_pending_lock_model"] = selected_b_model
             st.success("Escenario A guardado para comparación.")
+            st.rerun()
     with controls_col2:
         if st.button("Limpiar comparación", key="ab_clear_baseline", width="stretch"):
             st.session_state.pop("ab_baseline_params", None)
@@ -728,18 +776,56 @@ def render_ab_comparator(current_results: Dict, params: Dict) -> None:
             st.session_state.pop("ab_baseline_model", None)
             st.info("Comparación A/B eliminada.")
 
+    current_summary = build_ab_summary(current_results, params, selected_b_model)
     baseline_summary = st.session_state.get("ab_baseline_summary")
+    baseline_payload = st.session_state.get("ab_baseline_params", {})
     if not baseline_summary:
         st.info("Aún no hay escenario A. Guarda uno para activar la comparación.")
+        preview_cols = st.columns(4)
+        preview_horizon = int(current_summary["years_horizon"])
+        preview_years = current_summary.get("years_to_fire")
+        with preview_cols[0]:
+            st.metric(
+                "⏱️ Años hasta FIRE (B)",
+                f"{preview_years} años" if preview_years is not None else f"No alcanzable (> {preview_horizon} años)",
+            )
+        with preview_cols[1]:
+            st.metric("📈 Éxito final (B)", f"{current_summary['success_rate_final']:.0f}%")
+        with preview_cols[2]:
+            st.metric("💰 P50 poder adquisitivo (B)", f"€{current_summary['final_real_p50']:,.0f}")
+        with preview_cols[3]:
+            st.metric("🎯 Objetivo FIRE (B, € hoy)", f"€{current_summary['fire_target']:,.0f}")
+        st.caption(
+            "Estos indicadores corresponden al modelo B seleccionado. "
+            "Guarda el escenario como A para ver deltas y lectura comparativa."
+        )
         st.markdown("</div>", unsafe_allow_html=True)
         return
 
-    current_summary = build_ab_summary(current_results, params)
+    current_payload = serialize_profile(params)
     created_at = st.session_state.get("ab_baseline_created_at", "n/d")
+    baseline_model = baseline_summary.get("model", st.session_state.get("ab_baseline_model", "n/d"))
     st.markdown(
-        f"<div class='ab-compare-caption'>A guardado: {created_at} | Modelo fijo: Monte Carlo (Normal)</div>",
+        (
+            f"<div class='ab-compare-caption'>A guardado: {created_at} | "
+            f"Modelo A: {baseline_model} | Modelo B: {selected_b_model}</div>"
+        ),
         unsafe_allow_html=True,
     )
+
+    baseline_cfg = baseline_payload.get("config", {}) if isinstance(baseline_payload, dict) else {}
+    current_cfg = current_payload.get("config", {}) if isinstance(current_payload, dict) else {}
+    changed_keys = sorted(
+        k for k in set(baseline_cfg.keys()).union(current_cfg.keys())
+        if baseline_cfg.get(k) != current_cfg.get(k)
+    )
+    st.caption(f"Parámetros distintos vs A: {len(changed_keys)}")
+    if changed_keys:
+        preview = ", ".join(changed_keys[:8])
+        extra = f" (+{len(changed_keys)-8} más)" if len(changed_keys) > 8 else ""
+        st.caption(f"Cambios detectados: {preview}{extra}")
+    elif baseline_model != selected_b_model:
+        st.caption("Misma configuración de perfil; la comparación refleja únicamente cambio de modelo.")
 
     baseline_years = baseline_summary.get("years_to_fire")
     current_years = current_summary.get("years_to_fire")
@@ -751,8 +837,12 @@ def render_ab_comparator(current_results: Dict, params: Dict) -> None:
 
     if baseline_years is not None and current_years is not None:
         delta_years = current_years - baseline_years
-        years_delta_text = f"{delta_years:+d} años vs A"
-        years_delta_color = "inverse"
+        if delta_years == 0:
+            years_delta_text = "Sin cambio vs A"
+            years_delta_color = "off"
+        else:
+            years_delta_text = f"{delta_years:+d} años vs A"
+            years_delta_color = "inverse"
     elif baseline_years is None and current_years is not None:
         years_delta_text = "Ahora sí alcanzable"
         years_delta_color = "normal"
@@ -767,6 +857,120 @@ def render_ab_comparator(current_results: Dict, params: Dict) -> None:
     real_delta = float(current_summary["final_real_p50"]) - float(baseline_summary.get("final_real_p50", 0.0))
     target_delta = float(current_summary["fire_target"]) - float(baseline_summary.get("fire_target", 0.0))
 
+    success_delta_text = "Sin cambio vs A" if abs(success_delta) < 0.05 else f"{success_delta:+.1f} pp vs A"
+    success_delta_color = "off" if abs(success_delta) < 0.05 else "normal"
+    real_delta_text = "Sin cambio vs A" if abs(real_delta) < 1.0 else f"{real_delta:+,.0f} € vs A"
+    real_delta_color = "off" if abs(real_delta) < 1.0 else "normal"
+    target_delta_text = "Sin cambio vs A" if abs(target_delta) < 1.0 else f"{target_delta:+,.0f} € vs A"
+    target_delta_color = "off" if abs(target_delta) < 1.0 else "inverse"
+
+    def _fmt_param_value(value: Any) -> str:
+        if isinstance(value, bool):
+            return "Sí" if value else "No"
+        if isinstance(value, (int, float)):
+            abs_value = abs(float(value))
+            if abs_value >= 1000:
+                return f"{float(value):,.0f}"
+            if abs_value >= 1:
+                return f"{float(value):.2f}"
+            return f"{float(value):.4f}"
+        if value is None:
+            return "n/d"
+        return str(value)
+
+    pretty_names = {
+        "gastos_anuales": "Gasto anual objetivo",
+        "safe_withdrawal_rate": "SWR",
+        "patrimonio_actual": "Patrimonio actual",
+        "aportacion_mensual": "Aportación mensual",
+        "edad_actual": "Edad actual",
+        "edad_objetivo": "Edad objetivo",
+        "inflacion_anual": "Inflación",
+        "rentabilidad_anual": "Rentabilidad esperada",
+        "volatilidad_anual": "Volatilidad",
+        "region": "CCAA fiscal",
+        "tax_year": "Año fiscal",
+        "fiscal_mode": "Modo fiscal",
+        "taxable_withdrawal_ratio": "Retirada sujeta a impuesto",
+    }
+
+    impact_groups = {
+        "objetivo": {
+            "gastos_anuales",
+            "safe_withdrawal_rate",
+            "taxable_withdrawal_ratio",
+            "coste_pre_pension_anual",
+        },
+        "acumulacion": {
+            "patrimonio_actual",
+            "aportacion_mensual",
+            "edad_actual",
+            "edad_objetivo",
+            "rentabilidad_anual",
+            "volatilidad_anual",
+            "inflacion_anual",
+            "has_propiedad_principal",
+            "valor_vivienda_principal",
+            "deuda_vivienda_principal",
+            "cuota_hipoteca_vivienda",
+            "meses_hipoteca_vivienda_restantes",
+            "valor_inmuebles_invertibles",
+            "deuda_inmuebles_invertibles",
+            "cuota_hipoteca_inmuebles",
+            "meses_hipoteca_inmuebles_restantes",
+            "renta_bruta_alquiler_anual",
+        },
+        "fiscal": {
+            "fiscal_mode",
+            "region",
+            "tax_year",
+            "retirement_tax_regime",
+            "taxable_withdrawal_ratio",
+            "intl_tax_rate_gains",
+            "intl_tax_rate_dividends",
+            "intl_tax_rate_interest",
+            "intl_tax_rate_wealth",
+        },
+    }
+
+    if changed_keys:
+        st.markdown("**Qué cambió exactamente (A → B)**")
+        for key in changed_keys[:8]:
+            label = pretty_names.get(key, key)
+            left = _fmt_param_value(baseline_cfg.get(key))
+            right = _fmt_param_value(current_cfg.get(key))
+            st.markdown(f"- `{label}`: `{left}` → `{right}`")
+        if len(changed_keys) > 8:
+            st.markdown(f"- `...` y {len(changed_keys) - 8} cambios adicionales.")
+
+        changed_set = set(changed_keys)
+        changed_objetivo = sorted(changed_set.intersection(impact_groups["objetivo"]))
+        changed_acumulacion = sorted(changed_set.intersection(impact_groups["acumulacion"]))
+        changed_fiscal = sorted(changed_set.intersection(impact_groups["fiscal"]))
+        changed_other = sorted(
+            changed_set.difference(
+                impact_groups["objetivo"].union(impact_groups["acumulacion"]).union(impact_groups["fiscal"])
+            )
+        )
+
+        st.markdown("**Cómo impactan estos cambios**")
+        if changed_objetivo:
+            st.markdown(
+                f"- `Objetivo FIRE` ({len(changed_objetivo)} cambio/s): mueve el umbral de capital necesario."
+            )
+        if changed_acumulacion:
+            st.markdown(
+                f"- `Trayectoria de cartera` ({len(changed_acumulacion)} cambio/s): afecta años hasta FIRE, probabilidad y P50 final."
+            )
+        if changed_fiscal:
+            st.markdown(
+                f"- `Fiscalidad` ({len(changed_fiscal)} cambio/s): puede alterar rendimiento neto y necesidades de retirada."
+            )
+        if changed_other:
+            st.markdown(
+                f"- `Otros` ({len(changed_other)} cambio/s): impacto indirecto según el modelo activo."
+            )
+
     m1, m2, m3, m4 = st.columns(4)
     with m1:
         st.metric(
@@ -779,22 +983,22 @@ def render_ab_comparator(current_results: Dict, params: Dict) -> None:
         st.metric(
             "📈 Éxito final (B)",
             f"{current_summary['success_rate_final']:.0f}%",
-            delta=f"{success_delta:+.1f} pp vs A",
-            delta_color="normal",
+            delta=success_delta_text,
+            delta_color=success_delta_color,
         )
     with m3:
         st.metric(
             "💰 P50 poder adquisitivo (B)",
             f"€{current_summary['final_real_p50']:,.0f}",
-            delta=f"{real_delta:+,.0f} € vs A",
-            delta_color="normal",
+            delta=real_delta_text,
+            delta_color=real_delta_color,
         )
     with m4:
         st.metric(
             "🎯 Objetivo FIRE (B, € hoy)",
             f"€{current_summary['fire_target']:,.0f}",
-            delta=f"{target_delta:+,.0f} € vs A",
-            delta_color="inverse",
+            delta=target_delta_text,
+            delta_color=target_delta_color,
         )
 
     score = 0
@@ -818,7 +1022,61 @@ def render_ab_comparator(current_results: Dict, params: Dict) -> None:
     elif real_delta <= -10_000:
         score -= 1
 
-    if score >= 2:
+    no_changes_same_model = (
+        not changed_keys
+        and baseline_model == selected_b_model
+        and (
+            (baseline_years is None and current_years is None)
+            or (baseline_years == current_years)
+        )
+        and abs(success_delta) < 0.05
+        and abs(real_delta) < 1.0
+        and abs(target_delta) < 1.0
+    )
+
+    no_changes_different_model = (
+        not changed_keys
+        and baseline_model != selected_b_model
+        and (
+            (baseline_years is None and current_years is None)
+            or (baseline_years == current_years)
+        )
+        and abs(success_delta) < 0.05
+        and abs(real_delta) < 1.0
+        and abs(target_delta) < 1.0
+    )
+
+    path_stable = (
+        (
+            baseline_years is None and current_years is None
+        ) or (
+            baseline_years is not None and current_years is not None and baseline_years == current_years
+        )
+    ) and abs(success_delta) < 0.2 and abs(real_delta) < 1_000
+
+    if no_changes_same_model:
+        insight_cls = ""
+        insight_text = "Lectura rápida: A y B son equivalentes. No hay cambios efectivos en parámetros ni en resultados."
+    elif no_changes_different_model:
+        insight_cls = ""
+        insight_text = (
+            "Lectura rápida: has comparado modelos distintos con el mismo perfil y, en este caso, "
+            "el resultado agregado es prácticamente igual."
+        )
+    elif path_stable and abs(target_delta) >= 1_000:
+        insight_cls = "warn"
+        insight_text = (
+            "Lectura rápida: cambió el objetivo FIRE, pero casi no cambió la trayectoria simulada "
+            "(años, éxito y P50 real). Esto suele pasar cuando modificas gasto/SWR o supuestos que "
+            "mueven el umbral objetivo más que el comportamiento de la cartera."
+        )
+    elif not changed_keys and baseline_model != selected_b_model:
+        insight_cls = "warn"
+        insight_text = (
+            "Lectura rápida: perfil idéntico, resultado distinto por método de simulación. "
+            "Aquí estás midiendo sensibilidad del plan al modelo (normal vs histórico/backtesting)."
+        )
+    elif score >= 2:
         insight_cls = ""
         insight_text = "Lectura rápida: B mejora de forma clara frente a A en robustez y/o velocidad hacia FIRE."
     elif score <= -2:
@@ -832,6 +1090,11 @@ def render_ab_comparator(current_results: Dict, params: Dict) -> None:
         f"<div class='ab-compare-insight {insight_cls}'>{insight_text}</div>",
         unsafe_allow_html=True,
     )
+    if path_stable and len(changed_keys) > 0:
+        st.caption(
+            "Si quieres comparar impacto real en la trayectoria, cambia variables de acumulación "
+            "(patrimonio inicial, aportación, horizonte, rentabilidad, inflación o volatilidad)."
+        )
     st.markdown("</div>", unsafe_allow_html=True)
 
 
@@ -1632,7 +1895,6 @@ def render_sidebar() -> Dict:
             "taxable_withdrawal_ratio_mode": "taxable_withdrawal_ratio_mode_key",
             "taxable_withdrawal_ratio": "taxable_withdrawal_ratio_key",
             "tax_year": "tax_year_key",
-            "region": "region_key",
         }
         for cfg_key, widget_key in key_map.items():
             if cfg_key in config:
@@ -1653,6 +1915,8 @@ def render_sidebar() -> Dict:
                 if config["fiscal_mode"] == FISCAL_MODE_INTL_BASIC
                 else "España (Tax Pack)"
             )
+        if "region" in config:
+            st.session_state["loaded_profile_region_code"] = config["region"]
         if "intl_tax_rates" in config and isinstance(config["intl_tax_rates"], dict):
             rates = config["intl_tax_rates"]
             st.session_state["intl_tax_gains_key"] = float(rates.get("gains", 0.10)) * 100.0
@@ -1661,25 +1925,33 @@ def render_sidebar() -> Dict:
             st.session_state["intl_tax_wealth_key"] = float(rates.get("wealth", 0.00)) * 100.0
 
         if "patrimonio_inicial" in config:
-            st.session_state["patrimonio_exact_mode"] = True
+            st.session_state["patrimonio_exact_mode"] = bool(config.get("patrimonio_exact_mode", True))
             st.session_state["patrimonio_exact_value"] = int(float(config["patrimonio_inicial"]))
         if "aportacion_mensual" in config:
-            st.session_state["aportacion_exact_mode"] = True
+            st.session_state["aportacion_exact_mode"] = bool(config.get("aportacion_exact_mode", True))
             st.session_state["aportacion_exact_value"] = int(float(config["aportacion_mensual"]))
         if "cuota_hipoteca_vivienda_mensual" in config:
-            st.session_state["primary_mortgage_payment_exact_mode"] = True
+            st.session_state["primary_mortgage_payment_exact_mode"] = bool(
+                config.get("cuota_hipoteca_vivienda_mensual_exact_mode", True)
+            )
             st.session_state["primary_mortgage_payment_exact_value"] = int(float(config["cuota_hipoteca_vivienda_mensual"]))
         if "meses_hipoteca_vivienda_restantes_exact_mode" in config:
             st.session_state["primary_mortgage_months_exact_mode"] = bool(config["meses_hipoteca_vivienda_restantes_exact_mode"])
         if "meses_hipoteca_vivienda_restantes" in config:
             st.session_state["primary_mortgage_months_exact_value"] = int(float(config["meses_hipoteca_vivienda_restantes"]))
         if "cuota_hipoteca_inmuebles_mensual" in config:
-            st.session_state["investment_mortgage_payment_exact_mode"] = True
+            st.session_state["investment_mortgage_payment_exact_mode"] = bool(
+                config.get("cuota_hipoteca_inmuebles_mensual_exact_mode", True)
+            )
             st.session_state["investment_mortgage_payment_exact_value"] = int(float(config["cuota_hipoteca_inmuebles_mensual"]))
         if "meses_hipoteca_inmuebles_restantes_exact_mode" in config:
             st.session_state["investment_mortgage_months_exact_mode"] = bool(config["meses_hipoteca_inmuebles_restantes_exact_mode"])
         if "meses_hipoteca_inmuebles_restantes" in config:
             st.session_state["investment_mortgage_months_exact_value"] = int(float(config["meses_hipoteca_inmuebles_restantes"]))
+        if "bootstrap_historical_strategy_label" in config:
+            st.session_state["bootstrap_historical_strategy_label"] = str(config["bootstrap_historical_strategy_label"])
+        if "backtest_historical_strategy_label" in config:
+            st.session_state["backtest_historical_strategy_label"] = str(config["backtest_historical_strategy_label"])
 
     with st.sidebar.expander("💾 Perfil (cargar JSON)", expanded=False):
         profile_file = st.file_uploader(
@@ -2326,6 +2598,7 @@ def render_sidebar() -> Dict:
         step=0.5,
         disabled=lock_profile_fields,
         help="Rendimiento esperado del portafolio (histórico promedio: 7%)",
+        key="rentabilidad_esperada_key",
     ) / 100
 
     volatilidad = st.sidebar.slider(
@@ -2335,6 +2608,7 @@ def render_sidebar() -> Dict:
         value=15.0,
         step=1.0,
         help="Desviación estándar de retornos (riesgo de mercado)",
+        key="volatilidad_key",
     ) / 100
 
     inflacion = st.sidebar.slider(
@@ -2345,11 +2619,13 @@ def render_sidebar() -> Dict:
         step=0.5,
         disabled=lock_profile_fields,
         help="Inflación esperada para ajustar poder adquisitivo",
+        key="inflacion_key",
     ) / 100
     inflacionar_aportacion = st.sidebar.checkbox(
         "Actualizar aportación mensual con inflación",
         value=False,
         help="Si se activa, tu aportación sube cada año al ritmo de la inflación.",
+        key="inflacionar_aportacion_key",
     )
     contribution_growth_rate = inflacion if inflacionar_aportacion else 0.0
     if modo_guiado:
@@ -2369,6 +2645,7 @@ def render_sidebar() -> Dict:
             "España (Tax Pack): fiscalidad regional española detallada. "
             "Internacional básico: aproximación con tasas efectivas manuales."
         ),
+        key="fiscal_mode_label_key",
     )
     fiscal_mode = (
         FISCAL_MODE_ES_TAXPACK
@@ -2384,6 +2661,7 @@ def render_sidebar() -> Dict:
         ],
         index=0,
         help="Jubilación: prioriza impuestos al retirar. Acumulación: prioriza impuestos antes de FIRE.",
+        key="fiscal_priority_key",
     )
     intl_tax_rates: Dict[str, float] = {
         "gains": 0.10,
@@ -2400,6 +2678,7 @@ def render_sidebar() -> Dict:
                 "Otro",
             ],
             help="Aplicar tratamiento fiscal específico",
+            key="regimen_fiscal_key",
         )
 
         # Tax optimization context for Spanish users
@@ -2414,6 +2693,7 @@ def render_sidebar() -> Dict:
             "Incluir optimización de traspasos entre fondos",
             value=False,
             help="Estrategia de harvest-loss para optimizar impuestos",
+            key="include_optimizacion_key",
         )
     else:
         regimen_fiscal = "Otro"
@@ -2427,6 +2707,7 @@ def render_sidebar() -> Dict:
             max_value=60.0,
             value=10.0,
             step=0.5,
+            key="intl_tax_gains_key",
         ) / 100.0
         intl_tax_rates["dividends"] = st.sidebar.slider(
             "Impuesto efectivo dividendos (%)",
@@ -2434,6 +2715,7 @@ def render_sidebar() -> Dict:
             max_value=60.0,
             value=15.0,
             step=0.5,
+            key="intl_tax_dividends_key",
         ) / 100.0
         intl_tax_rates["interest"] = st.sidebar.slider(
             "Impuesto efectivo intereses (%)",
@@ -2441,6 +2723,7 @@ def render_sidebar() -> Dict:
             max_value=60.0,
             value=20.0,
             step=0.5,
+            key="intl_tax_interest_key",
         ) / 100.0
         intl_tax_rates["wealth"] = st.sidebar.slider(
             "Impuesto anual efectivo sobre patrimonio (%)",
@@ -2448,6 +2731,7 @@ def render_sidebar() -> Dict:
             max_value=5.0,
             value=0.0,
             step=0.1,
+            key="intl_tax_wealth_key",
         ) / 100.0
 
     taxable_withdrawal_ratio_mode = st.sidebar.selectbox(
@@ -2458,6 +2742,7 @@ def render_sidebar() -> Dict:
             "Automático: se estima con aportaciones + crecimiento proyectado. "
             "Manual: tú defines el porcentaje."
         ),
+        key="taxable_withdrawal_ratio_mode_key",
     )
     taxable_withdrawal_ratio = 0.40
     if taxable_withdrawal_ratio_mode == "Manual":
@@ -2471,6 +2756,7 @@ def render_sidebar() -> Dict:
                 "Estimación de qué parte de tu retirada anual genera base del ahorro imponible. "
                 "Depende de cuánto de la retirada sean plusvalías/intereses frente a principal aportado."
             ),
+            key="taxable_withdrawal_ratio_key",
         ) / 100
         if modo_guiado:
             st.sidebar.caption(
@@ -2494,6 +2780,7 @@ def render_sidebar() -> Dict:
                 options=available_years,
                 index=len(available_years) - 1,
                 help="Conjunto de reglas fiscales versionadas por año.",
+                key="tax_year_key",
             )
             try:
                 tax_pack = load_tax_pack(int(tax_year), "es")
@@ -2502,11 +2789,20 @@ def render_sidebar() -> Dict:
                 region_options = get_region_options(tax_pack)
                 region_labels = [label for _, label in region_options]
                 label_to_key = {label: key for key, label in region_options}
+                key_to_label = {key: label for key, label in region_options}
+                loaded_region_code = st.session_state.get("loaded_profile_region_code")
+                default_region_label = key_to_label.get(loaded_region_code, "Madrid")
+                default_region_index = (
+                    region_labels.index(default_region_label)
+                    if default_region_label in region_labels
+                    else (region_labels.index("Madrid") if "Madrid" in region_labels else 0)
+                )
                 selected_label = st.sidebar.selectbox(
                     "Comunidad / territorio",
                     options=region_labels,
-                    index=region_labels.index("Madrid") if "Madrid" in region_labels else 0,
+                    index=default_region_index,
                     help="Se usa para IRPF del ahorro y Patrimonio/ISGF regionales.",
+                    key="region_key",
                 )
                 region = label_to_key[selected_label]
                 if tax_pack_meta:
@@ -2542,7 +2838,9 @@ def render_sidebar() -> Dict:
         "profile_name": profile_name,
         "apply_profile_defaults": apply_profile_defaults,
         "patrimonio_inicial": patrimonio_inicial,
+        "patrimonio_exact_mode": bool(st.session_state.get("patrimonio_exact_mode", False)),
         "aportacion_mensual": aportacion_mensual,
+        "aportacion_exact_mode": bool(st.session_state.get("aportacion_exact_mode", False)),
         "edad_actual": edad_actual,
         "edad_objetivo": edad_objetivo,
         "rentabilidad_esperada": rentabilidad_esperada,
@@ -2569,6 +2867,9 @@ def render_sidebar() -> Dict:
         "vivienda_habitual_hipoteca": vivienda_habitual_hipoteca,
         "incluir_cuota_vivienda_en_simulacion": incluir_cuota_vivienda_en_simulacion,
         "cuota_hipoteca_vivienda_mensual": cuota_hipoteca_vivienda_mensual,
+        "cuota_hipoteca_vivienda_mensual_exact_mode": bool(
+            st.session_state.get("primary_mortgage_payment_exact_mode", False)
+        ),
         "meses_hipoteca_vivienda_restantes": meses_hipoteca_vivienda_restantes,
         "meses_hipoteca_vivienda_restantes_exact_mode": meses_hipoteca_vivienda_restantes_exact_mode,
         "aplicar_ajuste_vivienda_habitual": aplicar_ajuste_vivienda_habitual,
@@ -2577,6 +2878,9 @@ def render_sidebar() -> Dict:
         "inmuebles_invertibles_hipoteca": inmuebles_invertibles_hipoteca,
         "incluir_cuota_inmuebles_en_simulacion": incluir_cuota_inmuebles_en_simulacion,
         "cuota_hipoteca_inmuebles_mensual": cuota_hipoteca_inmuebles_mensual,
+        "cuota_hipoteca_inmuebles_mensual_exact_mode": bool(
+            st.session_state.get("investment_mortgage_payment_exact_mode", False)
+        ),
         "meses_hipoteca_inmuebles_restantes": meses_hipoteca_inmuebles_restantes,
         "meses_hipoteca_inmuebles_restantes_exact_mode": meses_hipoteca_inmuebles_restantes_exact_mode,
         # Compatibilidad con nombres anteriores
@@ -2608,6 +2912,8 @@ def render_sidebar() -> Dict:
         "plan_pensiones_privado_neto_anual": plan_pensiones_privado_neto_anual,
         "otras_rentas_post_jubilacion_netas": otras_rentas_post_jubilacion_netas,
         "coste_pre_pension_anual": coste_pre_pension_anual,
+        "bootstrap_historical_strategy_label": st.session_state.get("bootstrap_historical_strategy_label"),
+        "backtest_historical_strategy_label": st.session_state.get("backtest_historical_strategy_label"),
         # Compatibilidad con lógica previa
         "usar_patrimonio_neto_en_simulacion": usar_capital_invertible_ampliado,
         "net_worth_data": net_worth_data,
@@ -4013,8 +4319,8 @@ def main():
 
     st.divider()
 
-    # 10. A/B COMPARATOR (BASE MODEL)
-    render_ab_comparator(simulation_results, params)
+    # 10. A/B COMPARATOR (cross-model capable)
+    render_ab_comparator(simulation_results_by_model, params)
 
     # Footer
     st.divider()
