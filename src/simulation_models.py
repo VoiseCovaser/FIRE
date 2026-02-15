@@ -95,6 +95,12 @@ def _simulate_from_return_matrix(
     annual_spending: float,
     safe_withdrawal_rate: float,
     annual_returns_matrix: np.ndarray,
+    property_sale_enabled: bool = False,
+    property_sale_year: int = 0,
+    property_sale_amount: float = 0.0,
+    rental_drop_enabled: bool = False,
+    rental_drop_year: int = 0,
+    rental_drop_annual_amount: float = 0.0,
     tax_pack: Optional[Dict] = None,
     region: Optional[str] = None,
 ) -> Dict:
@@ -103,6 +109,10 @@ def _simulate_from_return_matrix(
         raise ValueError("safe_withdrawal_rate must be > 0.")
 
     n_sims, years = annual_returns_matrix.shape
+    sale_year = int(property_sale_year)
+    sale_amount = max(0.0, float(property_sale_amount)) if property_sale_enabled else 0.0
+    drop_year = int(rental_drop_year)
+    drop_annual = max(0.0, float(rental_drop_annual_amount)) if rental_drop_enabled else 0.0
     annual_paths = np.zeros((n_sims, years + 1))
     annual_paths[:, 0] = initial_wealth
 
@@ -111,6 +121,8 @@ def _simulate_from_return_matrix(
         for year in range(1, years + 1):
             annual_return = annual_returns_matrix[sim, year - 1]
             annual_contribution_year = annual_contribution * ((1 + contribution_growth_rate) ** (year - 1))
+            if drop_annual > 0 and drop_year > 0 and year >= drop_year:
+                annual_contribution_year -= drop_annual * ((1 + contribution_growth_rate) ** (year - 1))
             gross_growth = portfolio * annual_return
             portfolio_pre_tax = portfolio + gross_growth + annual_contribution_year
 
@@ -121,6 +133,9 @@ def _simulate_from_return_matrix(
                 portfolio = portfolio_pre_tax - savings_tax - wealth_taxes["total_wealth_tax"]
             else:
                 portfolio = portfolio_pre_tax
+
+            if sale_amount > 0 and sale_year == year:
+                portfolio += sale_amount
 
             annual_paths[sim, year] = max(0.0, portfolio)
 
@@ -188,6 +203,12 @@ def monte_carlo_normal(
     contribution_growth_rate: float = 0.0,
     num_simulations: int = 10_000,
     seed: int = 42,
+    property_sale_enabled: bool = False,
+    property_sale_year: int = 0,
+    property_sale_amount: float = 0.0,
+    rental_drop_enabled: bool = False,
+    rental_drop_year: int = 0,
+    rental_drop_annual_amount: float = 0.0,
     tax_pack: Optional[Dict] = None,
     region: Optional[str] = None,
 ) -> Dict:
@@ -202,6 +223,12 @@ def monte_carlo_normal(
         annual_spending=annual_spending,
         safe_withdrawal_rate=safe_withdrawal_rate,
         annual_returns_matrix=annual_returns,
+        property_sale_enabled=property_sale_enabled,
+        property_sale_year=property_sale_year,
+        property_sale_amount=property_sale_amount,
+        rental_drop_enabled=rental_drop_enabled,
+        rental_drop_year=rental_drop_year,
+        rental_drop_annual_amount=rental_drop_annual_amount,
         tax_pack=tax_pack,
         region=region,
     )
@@ -218,6 +245,12 @@ def monte_carlo_bootstrap(
     contribution_growth_rate: float = 0.0,
     num_simulations: int = 10_000,
     seed: int = 42,
+    property_sale_enabled: bool = False,
+    property_sale_year: int = 0,
+    property_sale_amount: float = 0.0,
+    rental_drop_enabled: bool = False,
+    rental_drop_year: int = 0,
+    rental_drop_annual_amount: float = 0.0,
     tax_pack: Optional[Dict] = None,
     region: Optional[str] = None,
 ) -> Dict:
@@ -232,6 +265,12 @@ def monte_carlo_bootstrap(
         annual_spending=annual_spending,
         safe_withdrawal_rate=safe_withdrawal_rate,
         annual_returns_matrix=sampled,
+        property_sale_enabled=property_sale_enabled,
+        property_sale_year=property_sale_year,
+        property_sale_amount=property_sale_amount,
+        rental_drop_enabled=rental_drop_enabled,
+        rental_drop_year=rental_drop_year,
+        rental_drop_annual_amount=rental_drop_annual_amount,
         tax_pack=tax_pack,
         region=region,
     )
@@ -248,6 +287,12 @@ def backtest_rolling_windows(
     historical_years: Optional[np.ndarray] = None,
     historical_months_observed: Optional[np.ndarray] = None,
     contribution_growth_rate: float = 0.0,
+    property_sale_enabled: bool = False,
+    property_sale_year: int = 0,
+    property_sale_amount: float = 0.0,
+    rental_drop_enabled: bool = False,
+    rental_drop_year: int = 0,
+    rental_drop_annual_amount: float = 0.0,
     tax_pack: Optional[Dict] = None,
     region: Optional[str] = None,
 ) -> Dict:
@@ -270,6 +315,12 @@ def backtest_rolling_windows(
         annual_spending=annual_spending,
         safe_withdrawal_rate=safe_withdrawal_rate,
         annual_returns_matrix=return_matrix,
+        property_sale_enabled=property_sale_enabled,
+        property_sale_year=property_sale_year,
+        property_sale_amount=property_sale_amount,
+        rental_drop_enabled=rental_drop_enabled,
+        rental_drop_year=rental_drop_year,
+        rental_drop_annual_amount=rental_drop_annual_amount,
         tax_pack=tax_pack,
         region=region,
     )

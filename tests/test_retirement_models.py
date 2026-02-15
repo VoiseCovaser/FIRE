@@ -142,3 +142,61 @@ def test_pre_pension_extra_cost_applies_only_before_public_pension():
     post_rows = df[df["Tramo"] == "Post-pensión"]
     assert (pre_rows["Coste extra pre-pensión (€)"] > 0).all()
     assert (post_rows["Coste extra pre-pensión (€)"] == 0).all()
+
+
+def test_two_stage_schedule_applies_extra_withdrawal_schedule_sequentially():
+    pytest.importorskip("pandas")
+    df = build_decumulation_table_two_stage_schedule(
+        starting_portfolio=100_000,
+        fire_age=60,
+        years_in_retirement=4,
+        annual_spending_base=10_000,
+        pension_public_start_age=70,
+        pension_public_net_annual=0,
+        plan_private_start_age=70,
+        plan_private_duration_years=0,
+        plan_private_net_annual=0,
+        other_income_post_pension_annual=0,
+        pre_pension_extra_cost_annual=0,
+        expected_return=0.0,
+        inflation_rate=0.0,
+        tax_rate_on_gains=0.0,
+        annual_extra_withdrawal_schedule=[0.0, 0.0, 5_000.0, 5_000.0],
+    )
+    # Yearly withdrawals should include extra schedule from year 3 onward.
+    assert df.iloc[0]["Retirada anual (€)"] == pytest.approx(10_000.0)
+    assert df.iloc[1]["Retirada anual (€)"] == pytest.approx(10_000.0)
+    assert df.iloc[2]["Retirada anual (€)"] == pytest.approx(15_000.0)
+    assert df.iloc[3]["Retirada anual (€)"] == pytest.approx(15_000.0)
+    # Sequential capital path check (no return): 100k -> 90k -> 80k -> 65k -> 50k
+    assert df.iloc[3]["Capital final (€)"] == pytest.approx(50_000.0)
+
+
+def test_two_stage_schedule_withdrawal_identity_holds():
+    pytest.importorskip("pandas")
+    df = build_decumulation_table_two_stage_schedule(
+        starting_portfolio=250_000,
+        fire_age=60,
+        years_in_retirement=3,
+        annual_spending_base=20_000,
+        pension_public_start_age=61,
+        pension_public_net_annual=8_000,
+        plan_private_start_age=60,
+        plan_private_duration_years=2,
+        plan_private_net_annual=4_000,
+        other_income_post_pension_annual=1_000,
+        pre_pension_extra_cost_annual=2_000,
+        expected_return=0.0,
+        inflation_rate=0.0,
+        tax_rate_on_gains=0.0,
+        annual_mortgage_schedule=[1_200, 0, 0],
+        annual_extra_withdrawal_schedule=[300, 300, 300],
+    )
+    for _, row in df.iterrows():
+        expected = max(
+            0.0,
+            float(row["Necesidad base cartera (€)"])
+            + float(row["Coste extra pre-pensión (€)"])
+            - float(row["Ingresos totales (€)"]),
+        ) + float(row["Cuota hipoteca pendiente (€)"]) + float(row["Ajuste venta/alquiler (€)"])
+        assert float(row["Retirada anual (€)"]) == pytest.approx(expected)

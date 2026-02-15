@@ -130,6 +130,12 @@ def build_decumulation_table_two_stage_schedule(
     expected_return: float,
     inflation_rate: float,
     tax_rate_on_gains: float,
+    annual_mortgage_schedule: Optional[list] = None,
+    pending_installments_end_schedule: Optional[list] = None,
+    property_sale_enabled: bool = False,
+    property_sale_year: int = 0,
+    property_sale_amount: float = 0.0,
+    annual_extra_withdrawal_schedule: Optional[list] = None,
 ) -> Any:
     """Two-stage decumulation with explicit public/private pension schedule."""
     rows = []
@@ -154,9 +160,23 @@ def build_decumulation_table_two_stage_schedule(
             0.0,
             annual_spending_base + extra_cost - income_public - income_private - income_other,
         )
+        annual_mortgage_cost = 0.0
+        if annual_mortgage_schedule and year - 1 < len(annual_mortgage_schedule):
+            annual_mortgage_cost = max(0.0, float(annual_mortgage_schedule[year - 1]))
+        annual_extra_withdrawal = 0.0
+        if annual_extra_withdrawal_schedule and year - 1 < len(annual_extra_withdrawal_schedule):
+            annual_extra_withdrawal = max(0.0, float(annual_extra_withdrawal_schedule[year - 1]))
+        pending_installments_end_year = 0
+        if pending_installments_end_schedule and year - 1 < len(pending_installments_end_schedule):
+            pending_installments_end_year = max(0, int(pending_installments_end_schedule[year - 1]))
 
-        capital_inicial = portfolio
-        retirada = annual_need_from_portfolio * inflation_factor
+        sale_nominal = (
+            max(0.0, float(property_sale_amount)) * inflation_factor
+            if property_sale_enabled and int(property_sale_year) == year
+            else 0.0
+        )
+        capital_inicial = portfolio + sale_nominal
+        retirada = (annual_need_from_portfolio * inflation_factor) + annual_mortgage_cost + annual_extra_withdrawal
         growth_gross = capital_inicial * expected_return
         tax_growth = max(0.0, growth_gross) * max(0.0, tax_rate_on_gains)
         growth_net = growth_gross - tax_growth
@@ -167,10 +187,16 @@ def build_decumulation_table_two_stage_schedule(
                 "Año jubilación": year,
                 "Edad": age,
                 "Tramo": tramo,
+                "Necesidad base cartera (€)": annual_spending_base * inflation_factor,
                 "Ingreso pensión pública (€)": income_public * inflation_factor,
                 "Ingreso plan privado (€)": income_private * inflation_factor,
                 "Otras rentas (€)": income_other * inflation_factor,
+                "Ingresos totales (€)": (income_public + income_private + income_other) * inflation_factor,
                 "Coste extra pre-pensión (€)": extra_cost * inflation_factor,
+                "Ajuste venta/alquiler (€)": annual_extra_withdrawal,
+                "Venta inmueble (€)": sale_nominal,
+                "Cuota hipoteca pendiente (€)": annual_mortgage_cost,
+                "Cuotas pendientes fin año": pending_installments_end_year,
                 "Capital inicial (€)": capital_inicial,
                 "Retirada anual (€)": retirada,
                 "Crecimiento neto (€)": growth_net,

@@ -18,9 +18,11 @@ def compute_effective_housing_and_rental_flows(
     include_primary_mortgage_payment: bool = False,
     primary_mortgage_monthly_payment: float = 0.0,
     primary_mortgage_months_remaining: int = 0,
+    primary_mortgage_pending_installments: int = 0,
     include_investment_mortgage_payment: bool = False,
     investment_mortgage_monthly_payment: float = 0.0,
     investment_mortgage_months_remaining: int = 0,
+    investment_mortgage_pending_installments: int = 0,
 ) -> Dict[str, float]:
     """Compute effective monthly contribution and annual spending for simulation.
 
@@ -56,8 +58,14 @@ def compute_effective_housing_and_rental_flows(
         else 0.0
     )
 
-    primary_months_remaining = max(0, int(primary_mortgage_months_remaining))
-    investment_months_remaining = max(0, int(investment_mortgage_months_remaining))
+    primary_months_remaining = max(
+        0,
+        int(primary_mortgage_pending_installments or primary_mortgage_months_remaining),
+    )
+    investment_months_remaining = max(
+        0,
+        int(investment_mortgage_pending_installments or investment_mortgage_months_remaining),
+    )
 
     months_after_fire_primary = max(0, primary_months_remaining - months_to_fire)
     months_after_fire_investment = max(0, investment_months_remaining - months_to_fire)
@@ -74,11 +82,15 @@ def compute_effective_housing_and_rental_flows(
         - mortgages_monthly_total
     )
 
-    annual_spending_effective = max(
+    annual_spending_effective_without_post_fire_mortgage = max(
         0.0,
         float(annual_spending)
         - max(0.0, float(annual_primary_home_savings))
-        - rental_net_effective
+        - rental_net_effective,
+    )
+    annual_spending_effective = max(
+        0.0,
+        annual_spending_effective_without_post_fire_mortgage
         + (mortgages_monthly_post_fire * 12.0),
     )
 
@@ -90,6 +102,6 @@ def compute_effective_housing_and_rental_flows(
         "months_after_fire_primary": months_after_fire_primary,
         "months_after_fire_investment": months_after_fire_investment,
         "monthly_contribution_effective": monthly_contribution_effective,
+        "annual_spending_effective_without_post_fire_mortgage": annual_spending_effective_without_post_fire_mortgage,
         "annual_spending_effective": annual_spending_effective,
     }
-

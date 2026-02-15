@@ -210,3 +210,28 @@ def test_randomized_simulation_stress_no_numerical_breaks():
                 **common,
             )
         _assert_simulation_invariants(result)
+
+
+def test_rental_drop_applies_from_sale_year_onward():
+    result = monte_carlo_normal(
+        initial_wealth=0.0,
+        monthly_contribution=1_000.0,
+        years=5,
+        mean_return=0.0,
+        volatility=0.0,
+        inflation_rate=0.0,
+        annual_spending=10_000.0,
+        safe_withdrawal_rate=0.04,
+        num_simulations=1,
+        seed=1,
+        rental_drop_enabled=True,
+        rental_drop_year=3,
+        rental_drop_annual_amount=1_200.0,
+    )
+    path = result["paths"][0]
+    # Annual contribution is 12,000 until year 2, then 10,800 from year 3 onward.
+    assert path[1] == pytest.approx(12_000.0)
+    assert path[2] == pytest.approx(24_000.0)
+    assert path[3] == pytest.approx(34_800.0)
+    assert path[4] == pytest.approx(45_600.0)
+    assert path[5] == pytest.approx(56_400.0)
