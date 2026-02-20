@@ -59,8 +59,18 @@ from src.retirement_models import (
     estimate_auto_taxable_withdrawal_ratio as estimate_auto_taxable_withdrawal_ratio_core,
     build_decumulation_table_two_stage_schedule as build_decumulation_table_two_stage_schedule_core,
     build_decumulation_table_two_phase_net_withdrawal as build_decumulation_table_two_phase_net_withdrawal_core,
+    DECUM_BACKTEST_WINDOW_TEMPLATES,
+    DECUM_BACKTEST_PERCENTILES,
+    build_template_window_indices,
+    build_manual_window_indices,
 )
-from src.profile_io import serialize_profile, deserialize_profile
+from src.profile_io import (
+    serialize_profile,
+    deserialize_profile,
+    serialize_unified_bundle,
+    derive_simple_two_phase_from_legacy,
+    SIMPLE_TWO_PHASE_MIN_POST_PENSION_INCOME,
+)
 from src.fiscal_modes import (
     FISCAL_MODE_ES_TAXPACK,
     FISCAL_MODE_INTL_BASIC,
@@ -1812,6 +1822,7 @@ def build_decumulation_table_two_phase_net_withdrawal(
     property_sale_year: int = 0,
     property_sale_amount: float = 0.0,
     annual_extra_withdrawal_schedule: Optional[List[float]] = None,
+    stage2_non_portfolio_income_annual: float = 0.0,
 ) -> pd.DataFrame:
     """Compatibility wrapper around simple two-phase net-withdrawal model."""
     return build_decumulation_table_two_phase_net_withdrawal_core(
@@ -1821,6 +1832,7 @@ def build_decumulation_table_two_phase_net_withdrawal(
         phase2_start_age=phase2_start_age,
         stage1_net_withdrawal_annual=stage1_net_withdrawal_annual,
         stage2_net_withdrawal_annual=stage2_net_withdrawal_annual,
+        stage2_non_portfolio_income_annual=stage2_non_portfolio_income_annual,
         inflation_rate=inflation_rate,
         tax_rate_on_gains=tax_rate_on_gains,
         expected_return=expected_return,
@@ -1890,6 +1902,7 @@ def render_decumulation_chart(
     years_in_retirement: int,
     use_backtesting_mode: bool = False,
     backtesting_strategy_label: str = "",
+    backtesting_window_mode: str = "auto",
 ) -> None:
     """Render retirement decumulation chart with percentile cones and P50 cashflow context."""
     required = {"P5", "P25", "P50", "P75", "P95"}
@@ -1918,9 +1931,13 @@ def render_decumulation_chart(
         ([np.nan], p50_df["Retirada anual (€)"].astype(float).to_numpy())
     )
     ingresos_p50 = (
-        p50_df["Ingresos totales (€)"].astype(float).to_numpy()
-        if "Ingresos totales (€)" in p50_df.columns
-        else np.zeros(len(p50_df), dtype=float)
+        p50_df["Ingreso no cartera implícito (€)"].astype(float).to_numpy()
+        if "Ingreso no cartera implícito (€)" in p50_df.columns
+        else (
+            p50_df["Ingresos totales (€)"].astype(float).to_numpy()
+            if "Ingresos totales (€)" in p50_df.columns
+            else np.zeros(len(p50_df), dtype=float)
+        )
     )
     ingresos_p50 = np.concatenate(([np.nan], ingresos_p50))
 
@@ -2162,9 +2179,14 @@ def render_decumulation_chart(
     )
     if use_backtesting_mode:
         strategy_text = f" con estrategia {backtesting_strategy_label}" if backtesting_strategy_label else ""
+        mode_text = {
+            "auto": "selección automática de ventanas representativas por percentil",
+            "template": "selección avanzada con plantilla histórica desplazable",
+            "manual": "selección avanzada manual por percentil",
+        }.get(backtesting_window_mode, "selección de ventanas históricas")
         st.caption(
             "Nota técnica: decumulación en modo backtesting secuencial"
-            f"{strategy_text}; cada escenario P5..P95 usa una ventana histórica representativa."
+            f"{strategy_text}; {mode_text}."
         )
     else:
         st.caption(
@@ -2283,6 +2305,7 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
     stage1_years = 0
     annual_withdrawal_stage1 = annual_withdrawal_base
     annual_withdrawal_stage2 = annual_withdrawal_base
+    annual_post_pension_income_simple = 0.0
     pension_public_start_age = int(
         params.get(
             "two_phase_switch_age",
@@ -2301,6 +2324,19 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
             0.0,
             float(params.get("two_phase_withdrawal_stage1_net_annual", annual_withdrawal_base)),
         )
+        annual_post_pension_income_simple = max(
+            0.0,
+            float(
+                params.get(
+                    "two_phase_post_pension_income_annual",
+                    max(
+                        0.0,
+                        annual_withdrawal_stage1
+                        - float(params.get("two_phase_withdrawal_stage2_net_annual", annual_withdrawal_base)),
+                    ),
+                )
+            ),
+        )
         annual_withdrawal_stage2 = max(
             0.0,
             float(params.get("two_phase_withdrawal_stage2_net_annual", annual_withdrawal_base)),
@@ -2318,102 +2354,410 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
             annual_withdrawal_base - params.get("pension_neta_anual", 0.0),
         )
 
-    dec_tables: Dict[str, pd.DataFrame] = {}
-    if decumulation_backtesting_enabled:
-        try:
-            historical_returns = load_historical_annual_returns(strategy=backtesting_strategy)
-        except Exception as exc:
-            st.warning(
-                f"No se pudo activar backtesting en decumulación ({exc}). Se usa modo estándar."
+    def _build_dec_table_from_sequence(start_portfolio: float, annual_seq: np.ndarray) -> pd.DataFrame:
+        if use_simple_two_phase:
+            return build_decumulation_table_two_phase_net_withdrawal(
+                starting_portfolio=start_portfolio,
+                fire_age=fire_age,
+                years_in_retirement=years_in_retirement,
+                phase2_start_age=pension_public_start_age,
+                stage1_net_withdrawal_annual=annual_withdrawal_stage1,
+                stage2_net_withdrawal_annual=annual_withdrawal_stage2,
+                inflation_rate=params["inflacion"],
+                tax_rate_on_gains=tax_rate_hint,
+                annual_returns_sequence=annual_seq,
+                annual_mortgage_schedule=annual_mortgage_schedule,
+                pending_installments_end_schedule=pending_installments_end_schedule,
+                property_sale_enabled=retirement_sale_enabled,
+                property_sale_year=retirement_sale_year,
+                property_sale_amount=retirement_sale_amount,
+                annual_extra_withdrawal_schedule=annual_extra_withdrawal_schedule,
+                stage2_non_portfolio_income_annual=annual_post_pension_income_simple,
             )
-            historical_returns = None
+        if use_advanced_two_stage:
+            return build_decumulation_table_two_stage_schedule_with_return_path(
+                starting_portfolio=start_portfolio,
+                fire_age=fire_age,
+                annual_spending_base=annual_withdrawal_base,
+                pension_public_start_age=pension_public_start_age,
+                pension_public_net_annual=pension_public_net_annual,
+                plan_private_start_age=plan_private_start_age,
+                plan_private_duration_years=plan_private_duration_years,
+                plan_private_net_annual=plan_private_net_annual,
+                other_income_post_pension_annual=other_income_post,
+                pre_pension_extra_cost_annual=float(params.get("coste_pre_pension_anual", 0.0)),
+                annual_returns_sequence=annual_seq,
+                inflation_rate=params["inflacion"],
+                tax_rate_on_gains=tax_rate_hint,
+                annual_mortgage_schedule=annual_mortgage_schedule,
+                pending_installments_end_schedule=pending_installments_end_schedule,
+                property_sale_enabled=retirement_sale_enabled,
+                property_sale_year=retirement_sale_year,
+                property_sale_amount=retirement_sale_amount,
+                annual_extra_withdrawal_schedule=annual_extra_withdrawal_schedule,
+            )
+        return build_decumulation_table_with_return_path(
+            starting_portfolio=start_portfolio,
+            annual_withdrawal_base=annual_withdrawal_base,
+            annual_returns_sequence=annual_seq,
+            inflation_rate=params["inflacion"],
+            tax_rate_on_gains=tax_rate_hint,
+            annual_mortgage_schedule=annual_mortgage_schedule,
+            pending_installments_end_schedule=pending_installments_end_schedule,
+            property_sale_enabled=retirement_sale_enabled,
+            property_sale_year=retirement_sale_year,
+            property_sale_amount=retirement_sale_amount,
+            annual_extra_withdrawal_schedule=annual_extra_withdrawal_schedule,
+        )
 
-        if historical_returns is not None and len(historical_returns) >= years_in_retirement:
+    dec_tables: Dict[str, pd.DataFrame] = {}
+    decumulation_backtesting_returns_are_ordered = False
+    decumulation_backtesting_window_mode = "auto"
+    if decumulation_backtesting_enabled:
+        historical_returns = None
+        historical_years = None
+        try:
+            historical_years, historical_returns, _ = load_historical_annual_series(strategy=backtesting_strategy)
+        except Exception:
+            try:
+                historical_returns = load_historical_annual_returns(strategy=backtesting_strategy)
+                historical_years = np.arange(1, len(historical_returns) + 1)
+            except Exception as exc:
+                st.warning(
+                    f"No se pudo activar backtesting en decumulación ({exc}). Se usa modo estándar."
+                )
+
+        if (
+            historical_returns is not None
+            and historical_years is not None
+            and len(historical_returns) >= years_in_retirement
+        ):
             windows_total = len(historical_returns) - years_in_retirement + 1
             target_pct = {"P5": 0.05, "P25": 0.25, "P50": 0.50, "P75": 0.75, "P95": 0.95}
+            valid_start_years = [int(y) for y in np.asarray(historical_years[:windows_total], dtype=int).tolist()]
             decumulation_backtesting_effective = True
+            window_selection_mode = st.radio(
+                "Selección de ventanas históricas (decumulación)",
+                [
+                    "Automático (percentiles por capital final)",
+                    "Plantilla guiada (editable)",
+                    "Manual por percentil",
+                ],
+                horizontal=True,
+                key="decumulation_window_selection_mode_key",
+            )
 
-            for label, start_portfolio in starting_portfolios.items():
-                candidates: List[Tuple[float, float, int, pd.DataFrame]] = []
-                for idx in range(windows_total):
+            def _compute_auto_selection_maps() -> Tuple[
+                Dict[str, pd.DataFrame],
+                Dict[str, float],
+                Dict[str, Dict[str, float]],
+            ]:
+                auto_tables: Dict[str, pd.DataFrame] = {}
+                auto_returns: Dict[str, float] = {}
+                auto_meta: Dict[str, Dict[str, float]] = {}
+                for pct_label, start_portfolio in starting_portfolios.items():
+                    candidates: List[Tuple[float, float, int, pd.DataFrame]] = []
+                    for idx in range(windows_total):
+                        annual_seq = np.asarray(
+                            historical_returns[idx : idx + years_in_retirement],
+                            dtype=float,
+                        )
+                        table = _build_dec_table_from_sequence(start_portfolio, annual_seq)
+                        final_cap = float(table.iloc[-1]["Capital final (€)"]) if not table.empty else 0.0
+                        total_growth = float(np.prod(1.0 + annual_seq))
+                        cagr = (
+                            float(total_growth ** (1.0 / years_in_retirement) - 1.0)
+                            if years_in_retirement > 0 and total_growth > 0.0
+                            else -1.0
+                        )
+                        candidates.append((final_cap, cagr, idx, table))
+                    candidates.sort(key=lambda x: x[0])
+                    q = target_pct.get(pct_label, 0.5)
+                    rank = int(round((len(candidates) - 1) * q))
+                    rank = max(0, min(len(candidates) - 1, rank))
+                    _, cagr_sel, window_idx, table_sel = candidates[rank]
+                    auto_tables[pct_label] = table_sel
+                    auto_returns[pct_label] = cagr_sel
+                    start_year = int(valid_start_years[window_idx])
+                    end_year = int(start_year + years_in_retirement - 1)
+                    auto_meta[pct_label] = {
+                        "window_index": float(window_idx + 1),
+                        "windows_total": float(windows_total),
+                        "start_year": float(start_year),
+                        "end_year": float(end_year),
+                    }
+                return auto_tables, auto_returns, auto_meta
+
+            def _compute_from_window_indices(
+                window_indices: Dict[str, int],
+            ) -> Tuple[Dict[str, pd.DataFrame], Dict[str, float], Dict[str, Dict[str, float]]]:
+                tables_local: Dict[str, pd.DataFrame] = {}
+                returns_local: Dict[str, float] = {}
+                meta_local: Dict[str, Dict[str, float]] = {}
+                for pct_label, start_portfolio in starting_portfolios.items():
+                    idx = int(window_indices.get(pct_label, 0))
+                    idx = max(0, min(windows_total - 1, idx))
                     annual_seq = np.asarray(
                         historical_returns[idx : idx + years_in_retirement],
                         dtype=float,
                     )
-                    if use_simple_two_phase:
-                        table = build_decumulation_table_two_phase_net_withdrawal(
-                            starting_portfolio=start_portfolio,
-                            fire_age=fire_age,
-                            years_in_retirement=years_in_retirement,
-                            phase2_start_age=pension_public_start_age,
-                            stage1_net_withdrawal_annual=annual_withdrawal_stage1,
-                            stage2_net_withdrawal_annual=annual_withdrawal_stage2,
-                            inflation_rate=params["inflacion"],
-                            tax_rate_on_gains=tax_rate_hint,
-                            annual_returns_sequence=annual_seq,
-                            annual_mortgage_schedule=annual_mortgage_schedule,
-                            pending_installments_end_schedule=pending_installments_end_schedule,
-                            property_sale_enabled=retirement_sale_enabled,
-                            property_sale_year=retirement_sale_year,
-                            property_sale_amount=retirement_sale_amount,
-                            annual_extra_withdrawal_schedule=annual_extra_withdrawal_schedule,
-                        )
-                    elif use_advanced_two_stage:
-                        table = build_decumulation_table_two_stage_schedule_with_return_path(
-                            starting_portfolio=start_portfolio,
-                            fire_age=fire_age,
-                            annual_spending_base=annual_withdrawal_base,
-                            pension_public_start_age=pension_public_start_age,
-                            pension_public_net_annual=pension_public_net_annual,
-                            plan_private_start_age=plan_private_start_age,
-                            plan_private_duration_years=plan_private_duration_years,
-                            plan_private_net_annual=plan_private_net_annual,
-                            other_income_post_pension_annual=other_income_post,
-                            pre_pension_extra_cost_annual=float(params.get("coste_pre_pension_anual", 0.0)),
-                            annual_returns_sequence=annual_seq,
-                            inflation_rate=params["inflacion"],
-                            tax_rate_on_gains=tax_rate_hint,
-                            annual_mortgage_schedule=annual_mortgage_schedule,
-                            pending_installments_end_schedule=pending_installments_end_schedule,
-                            property_sale_enabled=retirement_sale_enabled,
-                            property_sale_year=retirement_sale_year,
-                            property_sale_amount=retirement_sale_amount,
-                            annual_extra_withdrawal_schedule=annual_extra_withdrawal_schedule,
-                        )
-                    else:
-                        table = build_decumulation_table_with_return_path(
-                            starting_portfolio=start_portfolio,
-                            annual_withdrawal_base=annual_withdrawal_base,
-                            annual_returns_sequence=annual_seq,
-                            inflation_rate=params["inflacion"],
-                            tax_rate_on_gains=tax_rate_hint,
-                            annual_mortgage_schedule=annual_mortgage_schedule,
-                            pending_installments_end_schedule=pending_installments_end_schedule,
-                            property_sale_enabled=retirement_sale_enabled,
-                            property_sale_year=retirement_sale_year,
-                            property_sale_amount=retirement_sale_amount,
-                            annual_extra_withdrawal_schedule=annual_extra_withdrawal_schedule,
-                        )
-                    final_cap = float(table.iloc[-1]["Capital final (€)"]) if not table.empty else 0.0
+                    table = _build_dec_table_from_sequence(start_portfolio, annual_seq)
+                    tables_local[pct_label] = table
                     total_growth = float(np.prod(1.0 + annual_seq))
-                    cagr = (
+                    returns_local[pct_label] = (
                         float(total_growth ** (1.0 / years_in_retirement) - 1.0)
                         if years_in_retirement > 0 and total_growth > 0.0
                         else -1.0
                     )
-                    candidates.append((final_cap, cagr, idx, table))
+                    start_year = int(valid_start_years[idx])
+                    end_year = int(start_year + years_in_retirement - 1)
+                    meta_local[pct_label] = {
+                        "window_index": float(idx + 1),
+                        "windows_total": float(windows_total),
+                        "start_year": float(start_year),
+                        "end_year": float(end_year),
+                    }
+                return tables_local, returns_local, meta_local
 
-                candidates.sort(key=lambda x: x[0])
-                q = target_pct.get(label, 0.5)
-                rank = int(round((len(candidates) - 1) * q))
-                rank = max(0, min(len(candidates) - 1, rank))
-                _, cagr_sel, window_idx, table_sel = candidates[rank]
-                dec_tables[label] = table_sel
-                scenario_expected_return[label] = cagr_sel
-                scenario_window_meta[label] = {
-                    "window_index": float(window_idx + 1),
-                    "windows_total": float(windows_total),
-                }
+            if window_selection_mode == "Automático (percentiles por capital final)":
+                decumulation_backtesting_window_mode = "auto"
+                for label, start_portfolio in starting_portfolios.items():
+                    candidates: List[Tuple[float, float, int, pd.DataFrame]] = []
+                    for idx in range(windows_total):
+                        annual_seq = np.asarray(
+                            historical_returns[idx : idx + years_in_retirement],
+                            dtype=float,
+                        )
+                        table = _build_dec_table_from_sequence(start_portfolio, annual_seq)
+                        final_cap = float(table.iloc[-1]["Capital final (€)"]) if not table.empty else 0.0
+                        total_growth = float(np.prod(1.0 + annual_seq))
+                        cagr = (
+                            float(total_growth ** (1.0 / years_in_retirement) - 1.0)
+                            if years_in_retirement > 0 and total_growth > 0.0
+                            else -1.0
+                        )
+                        candidates.append((final_cap, cagr, idx, table))
+
+                    candidates.sort(key=lambda x: x[0])
+                    q = target_pct.get(label, 0.5)
+                    rank = int(round((len(candidates) - 1) * q))
+                    rank = max(0, min(len(candidates) - 1, rank))
+                    _, cagr_sel, window_idx, table_sel = candidates[rank]
+                    dec_tables[label] = table_sel
+                    scenario_expected_return[label] = cagr_sel
+                    start_year = int(valid_start_years[window_idx])
+                    end_year = int(start_year + years_in_retirement - 1)
+                    scenario_window_meta[label] = {
+                        "window_index": float(window_idx + 1),
+                        "windows_total": float(windows_total),
+                        "start_year": float(start_year),
+                        "end_year": float(end_year),
+                    }
+                sorted_returns = sorted(
+                    float(scenario_expected_return.get(lbl, default_ret))
+                    for lbl in percentile_labels
+                )
+                for idx, lbl in enumerate(percentile_labels):
+                    scenario_expected_return[lbl] = sorted_returns[idx]
+                decumulation_backtesting_returns_are_ordered = True
+            else:
+                st.caption(
+                    "Modo avanzado: puedes usar una plantilla y desplazarla en el tiempo, "
+                    "o definir manualmente la ventana histórica de cada percentil."
+                )
+                selected_window_indices: Dict[str, int] = {}
+                if window_selection_mode == "Plantilla guiada (editable)":
+                    decumulation_backtesting_window_mode = "template"
+                    template_names = list(DECUM_BACKTEST_WINDOW_TEMPLATES.keys())
+                    selected_template = st.selectbox(
+                        "Plantilla histórica",
+                        options=template_names,
+                        index=0,
+                        key="decumulation_window_template_key",
+                    )
+                    template_cfg = DECUM_BACKTEST_WINDOW_TEMPLATES[selected_template]
+                    max_shift = max(1, windows_total // 2)
+                    shift_years = st.slider(
+                        "Desplazar plantilla (años)",
+                        min_value=-max_shift,
+                        max_value=max_shift,
+                        value=0,
+                        step=1,
+                        key="decumulation_window_template_shift_key",
+                        help="Mueve todas las ventanas seleccionadas hacia atrás/adelante en la historia.",
+                    )
+                    st.caption(str(template_cfg.get("description", "")))
+                    selected_window_indices = build_template_window_indices(
+                        valid_start_years,
+                        template_anchor_year=int(template_cfg.get("anchor_year", valid_start_years[0])),
+                        shift_years=shift_years,
+                        offsets=template_cfg.get("offsets", {}),
+                    )
+                else:
+                    decumulation_backtesting_window_mode = "manual"
+                    manual_years: Dict[str, int] = {}
+                    default_start_year = int(valid_start_years[len(valid_start_years) // 2])
+                    c1, c2, c3, c4, c5 = st.columns(5)
+                    manual_columns = [c1, c2, c3, c4, c5]
+                    for col, label in zip(manual_columns, DECUM_BACKTEST_PERCENTILES):
+                        with col:
+                            manual_years[label] = int(
+                                st.select_slider(
+                                    f"Inicio {label}",
+                                    options=valid_start_years,
+                                    value=default_start_year,
+                                    key=f"decumulation_window_start_{label}_key",
+                                )
+                            )
+                    selected_window_indices = build_manual_window_indices(
+                        valid_start_years=valid_start_years,
+                        start_year_by_percentile=manual_years,
+                    )
+
+                for label, start_portfolio in starting_portfolios.items():
+                    idx = int(selected_window_indices.get(label, 0))
+                    idx = max(0, min(windows_total - 1, idx))
+                    annual_seq = np.asarray(
+                        historical_returns[idx : idx + years_in_retirement],
+                        dtype=float,
+                    )
+                    table = _build_dec_table_from_sequence(start_portfolio, annual_seq)
+                    dec_tables[label] = table
+                    total_growth = float(np.prod(1.0 + annual_seq))
+                    scenario_expected_return[label] = (
+                        float(total_growth ** (1.0 / years_in_retirement) - 1.0)
+                        if years_in_retirement > 0 and total_growth > 0.0
+                        else -1.0
+                    )
+                    start_year = int(valid_start_years[idx])
+                    end_year = int(start_year + years_in_retirement - 1)
+                    scenario_window_meta[label] = {
+                        "window_index": float(idx + 1),
+                        "windows_total": float(windows_total),
+                        "start_year": float(start_year),
+                        "end_year": float(end_year),
+                    }
+                window_rows = []
+                for label in percentile_labels:
+                    meta = scenario_window_meta.get(label, {})
+                    window_rows.append(
+                        {
+                            "Escenario": label,
+                            "Ventana": f"{int(meta.get('start_year', 0))}-{int(meta.get('end_year', 0))}",
+                            "Índice": f"#{int(meta.get('window_index', 0))}/{int(meta.get('windows_total', 0))}",
+                        }
+                    )
+                st.dataframe(pd.DataFrame(window_rows), use_container_width=True, hide_index=True)
+
+            comparison_display_rows: List[Dict[str, Any]] = []
+            comparison_rank_rows: List[Dict[str, Any]] = []
+
+            def _depletion_year(df: pd.DataFrame) -> Optional[int]:
+                dep = df[df["Capital agotado"]]
+                if dep.empty:
+                    return None
+                return int(dep.iloc[0]["Año jubilación"])
+
+            def _window_span(meta_map: Dict[str, Dict[str, float]], pct_label: str) -> str:
+                meta = meta_map.get(pct_label, {})
+                start_year = int(meta.get("start_year", 0))
+                end_year = int(meta.get("end_year", 0))
+                if start_year > 0 and end_year > 0:
+                    return f"{start_year}-{end_year}"
+                return "n/d"
+
+            def _append_comparison_row(
+                name: str,
+                tables_map: Dict[str, pd.DataFrame],
+                returns_map: Dict[str, float],
+                meta_map: Dict[str, Dict[str, float]],
+            ) -> None:
+                p5_final = float(tables_map["P5"].iloc[-1]["Capital final (€)"]) if not tables_map["P5"].empty else 0.0
+                p50_final = float(tables_map["P50"].iloc[-1]["Capital final (€)"]) if not tables_map["P50"].empty else 0.0
+                p95_final = float(tables_map["P95"].iloc[-1]["Capital final (€)"]) if not tables_map["P95"].empty else 0.0
+                spread = p95_final - p5_final
+                p5_depletion = _depletion_year(tables_map["P5"])
+                p50_depletion = _depletion_year(tables_map["P50"])
+                p5_survival = years_in_retirement if p5_depletion is None else max(0, p5_depletion - 1)
+                p50_survival = years_in_retirement if p50_depletion is None else max(0, p50_depletion - 1)
+                p50_ret = float(returns_map.get("P50", default_ret))
+
+                comparison_display_rows.append(
+                    {
+                        "Enfoque": name,
+                        "Ventana P5": _window_span(meta_map, "P5"),
+                        "Ventana P50": _window_span(meta_map, "P50"),
+                        "Ventana P95": _window_span(meta_map, "P95"),
+                        "Retorno ventana P50": f"{p50_ret*100:.2f}%",
+                        "Capital final P5": fmt_eur(p5_final),
+                        "Capital final P50": fmt_eur(p50_final),
+                        "Brecha final P95-P5": fmt_eur(spread),
+                        "Agotamiento P5": f"Año {p5_depletion}" if p5_depletion is not None else "No se agota",
+                        "Agotamiento P50": f"Año {p50_depletion}" if p50_depletion is not None else "No se agota",
+                    }
+                )
+                comparison_rank_rows.append(
+                    {
+                        "name": name,
+                        "p5_final": p5_final,
+                        "p50_final": p50_final,
+                        "p95_final": p95_final,
+                        "spread": spread,
+                        "p5_survival": p5_survival,
+                        "p50_survival": p50_survival,
+                    }
+                )
+
+            auto_tables_cmp, auto_returns_cmp, auto_meta_cmp = _compute_auto_selection_maps()
+            _append_comparison_row("Automático (percentiles por capital final)", auto_tables_cmp, auto_returns_cmp, auto_meta_cmp)
+
+            for template_name in (
+                "Puente pre-pensión estresado (7-9%)",
+                "Recuperación tardía (drawdown prolongado)",
+            ):
+                template_cfg = DECUM_BACKTEST_WINDOW_TEMPLATES.get(template_name)
+                if not template_cfg:
+                    continue
+                idx_map = build_template_window_indices(
+                    valid_start_years,
+                    template_anchor_year=int(template_cfg.get("anchor_year", valid_start_years[0])),
+                    shift_years=0,
+                    offsets=template_cfg.get("offsets", {}),
+                )
+                tpl_tables, tpl_returns, tpl_meta = _compute_from_window_indices(idx_map)
+                _append_comparison_row(template_name, tpl_tables, tpl_returns, tpl_meta)
+
+            active_indices = {
+                pct_label: max(
+                    0,
+                    int(scenario_window_meta.get(pct_label, {}).get("window_index", 1)) - 1,
+                )
+                for pct_label in percentile_labels
+            }
+            active_tables, active_returns, active_meta = _compute_from_window_indices(active_indices)
+            _append_comparison_row("Selección activa en pantalla", active_tables, active_returns, active_meta)
+
+            st.markdown("#### Comparativa de enfoques de backtesting (decumulación)")
+            st.caption(
+                "Comparación completa de robustez del plan: automático vs plantillas de estrés y la selección actual."
+            )
+            st.dataframe(pd.DataFrame(comparison_display_rows), use_container_width=True, hide_index=True)
+
+            best_robust = max(
+                comparison_rank_rows,
+                key=lambda r: (r["p5_survival"], r["p5_final"]),
+            )
+            best_balance = max(
+                comparison_rank_rows,
+                key=lambda r: (r["p50_survival"], r["p50_final"]),
+            )
+            best_upside = max(comparison_rank_rows, key=lambda r: r["p95_final"])
+            st.info(
+                "Lectura comparativa: "
+                f"mejor robustez en cola adversa = **{best_robust['name']}**; "
+                f"mejor balance central (P50) = **{best_balance['name']}**; "
+                f"mayor upside extremo (P95) = **{best_upside['name']}**."
+            )
         else:
             st.warning(
                 "No hay suficientes datos históricos para backtesting en decumulación con este horizonte. "
@@ -2440,6 +2784,7 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                     property_sale_year=retirement_sale_year,
                     property_sale_amount=retirement_sale_amount,
                     annual_extra_withdrawal_schedule=annual_extra_withdrawal_schedule,
+                    stage2_non_portfolio_income_annual=annual_post_pension_income_simple,
                 )
             elif use_advanced_two_stage:
                 dec_tables[label] = build_decumulation_table_two_stage_schedule(
@@ -2599,6 +2944,7 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
         years_in_retirement,
         use_backtesting_mode=decumulation_backtesting_effective,
         backtesting_strategy_label=backtesting_strategy_label,
+        backtesting_window_mode=decumulation_backtesting_window_mode,
     )
 
     tab_labels = [
@@ -2615,15 +2961,29 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
             implied_delta = "Aplicado a este escenario"
             if decumulation_backtesting_effective and label in scenario_window_meta:
                 meta = scenario_window_meta[label]
-                implied_delta = (
-                    f"Ventana histórica #{int(meta['window_index'])}/{int(meta['windows_total'])}"
-                )
+                start_year = int(meta.get("start_year", 0))
+                end_year = int(meta.get("end_year", 0))
+                window_idx = int(meta.get("window_index", 0))
+                windows_total = int(meta.get("windows_total", 0))
+                if start_year > 0 and end_year > 0:
+                    implied_delta = f"Ventana {start_year}-{end_year} (#{window_idx}/{windows_total})"
+                else:
+                    implied_delta = f"Ventana histórica #{window_idx}/{windows_total}"
             st.metric(
-                "📈 Retorno anual implícito usado",
+                "📈 Retorno informativo de ventana (ordenado)"
+                if decumulation_backtesting_effective and decumulation_backtesting_returns_are_ordered
+                else "📈 Retorno informativo de ventana (seleccionada)"
+                if decumulation_backtesting_effective
+                else "📈 Retorno anual implícito usado",
                 f"{implied_return*100:.2f}%",
                 delta=implied_delta,
                 delta_color="off",
             )
+            if decumulation_backtesting_effective and decumulation_backtesting_returns_are_ordered:
+                st.caption(
+                    "En backtesting, este retorno se muestra ordenado por percentil "
+                    "para mantener coherencia visual entre P5→P95."
+                )
 
             dec_display_df = dec_tables[label].copy()
             if {
@@ -2686,6 +3046,7 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                 "Tramo",
                 "Capital inicial (€)",
                 "Necesidad base cartera (€)",
+                "Ingreso no cartera implícito (€)",
                 "Ingreso alquileres (€)",
                 "Ingreso pensión pública (€)",
                 "Ingreso plan privado (€)",
@@ -2718,6 +3079,7 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
             }
             for optional_col in (
                 "Necesidad base cartera (€)",
+                "Ingreso no cartera implícito (€)",
                 "Ingreso alquileres (€)",
                 "Ingreso pensión pública (€)",
                 "Ingreso plan privado (€)",
@@ -2735,6 +3097,11 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                 width="stretch",
                 hide_index=True,
             )
+            if use_simple_two_phase:
+                st.caption(
+                    "Modo simple: `Ingreso no cartera implícito (€)` muestra la reducción de retirada "
+                    "en fase 2 (equivalente a pensión/rentas agregadas)."
+                )
             render_print_friendly_table(
                 dec_display_df,
                 table_title=f"Tabla completa de jubilación ({label})",
@@ -2792,6 +3159,7 @@ def render_decumulation_box(simulation_results: Dict, params: Dict) -> None:
                 f"- Modelo simple de 2 fases: pre-pensión {stage1_years} años (hasta edad {pension_public_start_age}).\n"
                 f"- Retirada neta fase 1 (euros de hoy): {fmt_eur(annual_withdrawal_stage1)}/año.\n"
                 f"- Retirada neta fase 2 (euros de hoy): {fmt_eur(annual_withdrawal_stage2)}/año.\n"
+                f"- Ingreso post-pensión usado en modo simple (equivalente no-cartera): {fmt_eur(annual_post_pension_income_simple)}/año (euros de hoy).\n"
                 "- Ambas retiradas se actualizan automáticamente por inflación año a año.\n"
                 f"{cagr_source_line}"
                 f"- Impuesto orientativo sobre crecimiento: {tax_rate_hint*100:.1f}%.\n"
@@ -3218,6 +3586,7 @@ def render_sidebar() -> Dict:
             "two_phase_switch_age": "two_phase_switch_age_key",
             "two_phase_withdrawal_stage1_net_annual": "two_phase_withdrawal_stage1_net_annual_key",
             "two_phase_withdrawal_stage2_net_annual": "two_phase_withdrawal_stage2_net_annual_key",
+            "two_phase_post_pension_income_annual": "two_phase_post_pension_income_annual_key",
             "edad_pension_oficial": "edad_pension_oficial_key",
             "edad_inicio_pension_publica": "edad_inicio_pension_publica_key",
             "bonificacion_demora_pct": "bonificacion_demora_pct_key",
@@ -3267,6 +3636,41 @@ def render_sidebar() -> Dict:
                 if config["retirement_model_mode"] == "ADVANCED_INCOME_BREAKDOWN"
                 else "Simple (recomendado)"
             )
+            if config["retirement_model_mode"] == "SIMPLE_TWO_PHASE":
+                two_phase_defaults = derive_simple_two_phase_from_legacy(config)
+                if "two_phase_switch_age" not in config:
+                    st.session_state["two_phase_switch_age_key"] = int(two_phase_defaults["two_phase_switch_age"])
+                if "two_phase_withdrawal_stage1_net_annual" not in config:
+                    st.session_state["two_phase_withdrawal_stage1_net_annual_key"] = float(
+                        two_phase_defaults["two_phase_withdrawal_stage1_net_annual"]
+                    )
+                if "two_phase_withdrawal_stage2_net_annual" not in config:
+                    st.session_state["two_phase_withdrawal_stage2_net_annual_key"] = float(
+                        two_phase_defaults["two_phase_withdrawal_stage2_net_annual"]
+                    )
+                if "two_phase_post_pension_income_annual" not in config:
+                    st.session_state["two_phase_post_pension_income_annual_key"] = float(
+                        two_phase_defaults["two_phase_post_pension_income_annual"]
+                    )
+        else:
+            # Backward compatibility for legacy profiles without explicit retirement mode:
+            # default to simple mode and derive stage fields from legacy pension/income inputs.
+            st.session_state["retirement_model_mode_key"] = "Simple (recomendado)"
+            two_phase_defaults = derive_simple_two_phase_from_legacy(config)
+            if "two_phase_switch_age" not in config:
+                st.session_state["two_phase_switch_age_key"] = int(two_phase_defaults["two_phase_switch_age"])
+            if "two_phase_withdrawal_stage1_net_annual" not in config:
+                st.session_state["two_phase_withdrawal_stage1_net_annual_key"] = float(
+                    two_phase_defaults["two_phase_withdrawal_stage1_net_annual"]
+                )
+            if "two_phase_withdrawal_stage2_net_annual" not in config:
+                st.session_state["two_phase_withdrawal_stage2_net_annual_key"] = float(
+                    two_phase_defaults["two_phase_withdrawal_stage2_net_annual"]
+                )
+            if "two_phase_post_pension_income_annual" not in config:
+                st.session_state["two_phase_post_pension_income_annual_key"] = float(
+                    two_phase_defaults["two_phase_post_pension_income_annual"]
+                )
         if "region" in config:
             st.session_state["loaded_profile_region_code"] = config["region"]
         if "intl_tax_rates" in config and isinstance(config["intl_tax_rates"], dict):
@@ -3307,7 +3711,7 @@ def render_sidebar() -> Dict:
 
     with st.sidebar.expander("💾 Perfil (cargar JSON)", expanded=False):
         profile_file = st.file_uploader(
-            "Cargar perfil FIRE (.json)",
+            "Cargar JSON FIRE (perfil o escenario)",
             type=["json"],
             key="profile_json_uploader",
         )
@@ -3341,7 +3745,10 @@ def render_sidebar() -> Dict:
             st.caption("Perfil cargado activo: se aplicará sobre los controles actuales.")
         if loaded_profile_warnings:
             st.warning(" | ".join(loaded_profile_warnings))
-        st.caption("Carga perfil aquí. Para exportar/guardar usa el bloque `📥 Exportar Resultados`.")
+        st.caption(
+            "Carga aquí JSON de perfil o escenario (formato unificado y versiones anteriores). "
+            "Para exportar/guardar usa el bloque `📥 Exportar Resultados`."
+        )
 
     # STEP 1: Experience and setup mode
     st.sidebar.markdown("### 1) Configuración inicial")
@@ -3526,16 +3933,17 @@ def render_sidebar() -> Dict:
     patrimonio_default_value = patrimonio_options[default_idx]
 
     patrimonio_inicial = select_currency_with_exact_input(
-        label="Patrimonio actual (€)",
+        label="Patrimonio líquido actual (€)",
         options=patrimonio_options,
         default_value=patrimonio_default_value,
         exact_label="Introducir patrimonio exacto",
-        exact_input_label="Patrimonio actual exacto (€)",
+        exact_input_label="Patrimonio líquido actual exacto (€)",
         max_exact=20_000_000,
         step_exact=1_000,
         help_text=(
-            "Escala exponencial: más precisión en importes bajos y "
-            "más recorrido en importes altos."
+            "Introduce solo cartera líquida ya invertida (o lista para invertir). "
+            "Si quieres incluir equity de inmuebles invertibles, activa después "
+            "'Usar capital invertible ampliado'."
         ),
         key_prefix="patrimonio",
     )
@@ -3573,6 +3981,16 @@ def render_sidebar() -> Dict:
         ),
         key_prefix="aportacion",
     )
+    inflacionar_aportacion = st.sidebar.checkbox(
+        "Actualizar aportación mensual con inflación",
+        value=False,
+        help="Si se activa, tu aportación sube cada año al ritmo de la inflación.",
+        key="inflacionar_aportacion_key",
+    )
+    st.sidebar.caption(
+        "Por defecto la aportación es fija en euros nominales. "
+        "Activa esta opción para mantener poder de compra."
+    )
 
     edad_actual = st.sidebar.slider(
         "Edad actual",
@@ -3593,7 +4011,9 @@ def render_sidebar() -> Dict:
 
     if modo_guiado:
         st.sidebar.caption(
-            "Patrimonio = lo que ya tienes invertido. Aportación = lo que añades cada mes."
+            "Patrimonio (aquí) = cartera líquida invertida o invertible hoy. "
+            "No incluye vivienda habitual por defecto. "
+            "Aportación = lo que añades cada mes."
         )
 
     cuota_min_nonzero = 50
@@ -3651,11 +4071,11 @@ def render_sidebar() -> Dict:
                 key_prefix="primary_mortgage_payment",
             )
             meses_hipoteca_vivienda_restantes, meses_hipoteca_vivienda_restantes_exact_mode = select_int_with_exact_input(
-                label="Cuotas pendientes hipoteca vivienda principal (nº)",
+                label="Meses pendientes hipoteca vivienda principal (nº)",
                 options=months_options,
                 default_value=240,
-                exact_checkbox_label="Introducir cuotas exactas vivienda",
-                exact_input_label="Cuotas exactas hipoteca vivienda principal",
+                exact_checkbox_label="Introducir meses exactos vivienda",
+                exact_input_label="Meses exactos pendientes hipoteca vivienda principal",
                 max_exact=600,
                 key_prefix="primary_mortgage_months",
             )
@@ -3717,11 +4137,11 @@ def render_sidebar() -> Dict:
                 key_prefix="investment_mortgage_payment",
             )
             meses_hipoteca_inmuebles_restantes, meses_hipoteca_inmuebles_restantes_exact_mode = select_int_with_exact_input(
-                label="Cuotas pendientes hipoteca inmuebles invertibles (nº)",
+                label="Meses pendientes hipoteca inmuebles invertibles (nº)",
                 options=months_options,
                 default_value=240,
-                exact_checkbox_label="Introducir cuotas exactas inmuebles invertibles",
-                exact_input_label="Cuotas exactas hipoteca inmuebles invertibles",
+                exact_checkbox_label="Introducir meses exactos inmuebles invertibles",
+                exact_input_label="Meses exactos pendientes hipoteca inmuebles invertibles",
                 max_exact=600,
                 key_prefix="investment_mortgage_months",
             )
@@ -3740,6 +4160,10 @@ def render_sidebar() -> Dict:
             key="usar_capital_invertible_ampliado_key",
             help="Usa cartera líquida + equity de inmuebles invertibles - otras deudas. No incluye vivienda habitual.",
         )
+        if modo_guiado:
+            st.caption(
+                "Si lo activas, la base de simulación pasa de patrimonio líquido a capital invertible ampliado."
+            )
         renta_bruta_alquiler_anual = st.number_input(
             "Renta bruta anual por alquileres (€)",
             min_value=0,
@@ -3974,7 +4398,19 @@ def render_sidebar() -> Dict:
         legacy_other = float(st.session_state.get("otras_rentas_post_jubilacion_netas_key", 0.0))
         default_phase2_age = int(st.session_state.get("edad_inicio_pension_publica_key", max(edad_objetivo, 67)))
         default_stage1 = max(0.0, float(gastos_anuales) + legacy_pre_extra)
+        default_post_pension_income = max(
+            SIMPLE_TWO_PHASE_MIN_POST_PENSION_INCOME,
+            legacy_public + legacy_private + legacy_other,
+        )
         default_stage2 = max(0.0, float(gastos_anuales) - legacy_public - legacy_private - legacy_other)
+        # If legacy profile came from older simple mode (stage1/stage2 only), infer post-pension income.
+        if (legacy_public + legacy_private + legacy_other) <= 0.0:
+            stage1_state = float(st.session_state.get("two_phase_withdrawal_stage1_net_annual_key", default_stage1))
+            stage2_state = float(st.session_state.get("two_phase_withdrawal_stage2_net_annual_key", default_stage2))
+            default_post_pension_income = max(
+                SIMPLE_TWO_PHASE_MIN_POST_PENSION_INCOME,
+                stage1_state - stage2_state,
+            )
 
         # Initialize all compatibility fields.
         include_pension_in_simulation = False
@@ -3993,10 +4429,11 @@ def render_sidebar() -> Dict:
         two_phase_switch_age = edad_inicio_pension_publica
         two_phase_withdrawal_stage1_net_annual = default_stage1
         two_phase_withdrawal_stage2_net_annual = default_stage2
+        two_phase_post_pension_income_annual = default_post_pension_income
 
         if retirement_model_mode == "SIMPLE_TWO_PHASE":
             st.caption(
-                "Modo simple: cartera unificada. La retirada se define directamente por fase y se ajusta por inflación."
+                "Modo simple: cartera unificada. Define el puente pre‑pensión y la pensión/rentas post‑pensión."
             )
             two_phase_switch_age = st.slider(
                 "Edad de inicio fase 2 (post-pensión)",
@@ -4016,18 +4453,33 @@ def render_sidebar() -> Dict:
                     key="two_phase_withdrawal_stage1_net_annual_key",
                 )
             )
-            two_phase_withdrawal_stage2_net_annual = float(
+            two_phase_post_pension_income_annual = float(
                 st.number_input(
-                    "Retirada neta fase 2 (€/año de hoy)",
+                    "Ingreso anual post-pensión fuera de cartera (pensión+rentas, € de hoy)",
                     min_value=0,
                     max_value=500_000,
-                    value=int(default_stage2),
+                    value=int(default_post_pension_income),
                     step=1_000,
-                    key="two_phase_withdrawal_stage2_net_annual_key",
+                    key="two_phase_post_pension_income_annual_key",
+                    help="Incluye solo ingresos externos a la cartera (pensión pública, plan privado, alquileres u otras rentas). No incluye retiradas de cartera.",
                 )
             )
             st.caption(
-                "Se actualiza automáticamente por inflación. "
+                "Este importe **no** incluye retiradas de cartera: solo pensión y otras rentas netas esperadas."
+            )
+            two_phase_withdrawal_stage2_net_annual = max(
+                0.0,
+                float(gastos_anuales) - float(two_phase_post_pension_income_annual),
+            )
+            st.caption(
+                f"Retirada neta fase 2 calculada automáticamente: {fmt_eur(two_phase_withdrawal_stage2_net_annual)}/año "
+                f"(= gasto objetivo {fmt_eur(gastos_anuales)} - ingreso post-pensión {fmt_eur(two_phase_post_pension_income_annual)})."
+            )
+            st.caption(
+                f"Valor inicial sugerido en modo simple: {fmt_eur(SIMPLE_TWO_PHASE_MIN_POST_PENSION_INCOME)}/año (puedes bajarlo o subirlo)."
+            )
+            st.caption(
+                "Ambas fases se actualizan automáticamente por inflación. "
                 "Fiscalidad detallada por tipo de instrumento solo en modo avanzado."
             )
             # Compatibility aliases used by legacy flows.
@@ -4201,6 +4653,7 @@ def render_sidebar() -> Dict:
 
             # Backfill simple fields from advanced setup when available.
             two_phase_switch_age = edad_inicio_pension_publica
+            two_phase_post_pension_income_annual = max(0.0, float(pension_neta_anual))
             pre_income_approx = 0.0
             if (
                 int(duracion_plan_privado_anos) > 0
@@ -4251,17 +4704,7 @@ def render_sidebar() -> Dict:
         help="Inflación esperada para ajustar poder adquisitivo",
         key="inflacion_key",
     ) / 100
-    inflacionar_aportacion = st.sidebar.checkbox(
-        "Actualizar aportación mensual con inflación",
-        value=False,
-        help="Si se activa, tu aportación sube cada año al ritmo de la inflación.",
-        key="inflacionar_aportacion_key",
-    )
     contribution_growth_rate = inflacion if inflacionar_aportacion else 0.0
-    if modo_guiado:
-        st.sidebar.caption(
-            "Por defecto la aportación es fija en euros nominales. Activa esta opción para mantener poder de compra."
-        )
 
     st.sidebar.divider()
 
@@ -4555,6 +4998,7 @@ def render_sidebar() -> Dict:
         "two_phase_switch_age": two_phase_switch_age,
         "two_phase_withdrawal_stage1_net_annual": two_phase_withdrawal_stage1_net_annual,
         "two_phase_withdrawal_stage2_net_annual": two_phase_withdrawal_stage2_net_annual,
+        "two_phase_post_pension_income_annual": two_phase_post_pension_income_annual,
         "two_stage_retirement_model": two_stage_retirement_model,
         "edad_pension_oficial": edad_pension_oficial,
         "edad_inicio_pension_publica": edad_inicio_pension_publica,
@@ -5720,7 +6164,7 @@ def render_export_options(simulation_results: Dict, params: Dict) -> None:
         )
 
     with col2:
-        profile_payload = serialize_profile(params)
+        profile_payload = serialize_unified_bundle(params)
         st.download_button(
             label="💾 Descargar perfil (JSON)",
             data=json.dumps(profile_payload, ensure_ascii=False, indent=2),
@@ -5728,22 +6172,22 @@ def render_export_options(simulation_results: Dict, params: Dict) -> None:
             mime="application/json",
             width="stretch",
         )
-        scenario_payload = {
-            "meta": {
+        scenario_payload = serialize_unified_bundle(
+            params,
+            scenario_meta={
                 "generated_at": datetime.now().isoformat(),
                 "model": simulation_results.get("model_name", params.get("simulation_model", "n/d")),
                 "fiscal_mode": params.get("fiscal_mode", FISCAL_MODE_ES_TAXPACK),
             },
-            "params": serialize_profile(params),
-            "summary": {
+            scenario_summary={
                 "success_rate_final": float(simulation_results.get("success_rate_final", 0.0)),
                 "final_median_nominal": float(simulation_results.get("final_median", 0.0)),
                 "final_median_real": float(simulation_results.get("final_median_real", 0.0)),
                 "fire_target_display": float(fire_target),
             },
-        }
+        )
         st.download_button(
-            label="🧩 Descargar JSON (escenario)",
+            label="🧩 Descargar escenario (JSON unificado)",
             data=json.dumps(scenario_payload, ensure_ascii=False, indent=2),
             file_name=f"fire_scenario_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
             mime="application/json",
@@ -6190,11 +6634,6 @@ def main():
     
     # 9. FINAL NARRATIVE SUMMARY
     render_final_narrative_summary(simulation_results, params)
-
-    st.divider()
-
-    # 10. A/B COMPARATOR (cross-model capable)
-    render_ab_comparator(simulation_results_by_model, params)
 
     # Footer
     st.divider()

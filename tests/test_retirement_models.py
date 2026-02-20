@@ -8,8 +8,12 @@ from src.retirement_models import (
     estimate_auto_taxable_withdrawal_ratio,
     build_decumulation_table_two_phase_net_withdrawal,
     build_decumulation_table_two_stage_schedule,
+    build_template_window_indices,
+    build_manual_window_indices,
+    DECUM_BACKTEST_PERCENTILES,
 )
 from src.tax_engine import load_tax_pack
+import numpy as np
 
 
 def test_effective_public_pension_decreases_when_early():
@@ -222,6 +226,26 @@ def test_simple_two_phase_switch_applies_correct_withdrawals():
     assert df.iloc[3]["Tramo"] == "Post-pensión"
     assert df.iloc[0]["Retirada anual (€)"] == pytest.approx(36_000.0)
     assert df.iloc[3]["Retirada anual (€)"] == pytest.approx(12_000.0)
+    assert df.iloc[2]["Ingreso no cartera implícito (€)"] == pytest.approx(0.0)
+    assert df.iloc[3]["Ingreso no cartera implícito (€)"] == pytest.approx(24_000.0)
+
+
+def test_simple_two_phase_accepts_explicit_post_pension_income_for_display():
+    pytest.importorskip("pandas")
+    df = build_decumulation_table_two_phase_net_withdrawal(
+        starting_portfolio=500_000,
+        fire_age=60,
+        years_in_retirement=4,
+        phase2_start_age=62,
+        stage1_net_withdrawal_annual=30_000,
+        stage2_net_withdrawal_annual=20_000,
+        stage2_non_portfolio_income_annual=5_000,
+        inflation_rate=0.0,
+        tax_rate_on_gains=0.0,
+        expected_return=0.0,
+    )
+    assert df.iloc[1]["Ingreso no cartera implícito (€)"] == pytest.approx(0.0)
+    assert df.iloc[2]["Ingreso no cartera implícito (€)"] == pytest.approx(5_000.0)
 
 
 def test_simple_two_phase_inflation_indexing():
@@ -276,3 +300,44 @@ def test_simple_two_phase_with_backtesting_path():
     assert df.iloc[0]["Capital final (€)"] == pytest.approx(200_000.0)
     assert df.iloc[1]["Capital final (€)"] == pytest.approx(140_000.0)
     assert df.iloc[2]["Capital final (€)"] == pytest.approx(137_000.0)
+
+
+def test_decumulation_return_labels_can_be_monotonicized_for_display():
+    raw = {"P5": 0.0785, "P25": 0.031, "P50": 0.041, "P75": 0.052, "P95": 0.061}
+    ordered_labels = ["P5", "P25", "P50", "P75", "P95"]
+    sorted_returns = sorted(float(raw[l]) for l in ordered_labels)
+    normalized = {lbl: sorted_returns[i] for i, lbl in enumerate(ordered_labels)}
+    values = [normalized[l] for l in ordered_labels]
+    assert np.all(np.diff(values) >= 0.0)
+
+
+def test_build_template_window_indices_clamps_and_includes_all_percentiles():
+    years = list(range(1900, 1910))
+    indices = build_template_window_indices(
+        valid_start_years=years,
+        template_anchor_year=1902,
+        shift_years=100,  # force clamp at upper bound
+        offsets={"P5": -100, "P25": -5, "P50": 0, "P75": 3, "P95": 50},
+    )
+    assert set(indices.keys()) == set(DECUM_BACKTEST_PERCENTILES)
+    assert indices["P5"] == 0
+    assert indices["P95"] == len(years) - 1
+
+
+def test_build_manual_window_indices_maps_to_nearest_start_year():
+    years = [1921, 1930, 1945, 1960, 1980]
+    indices = build_manual_window_indices(
+        valid_start_years=years,
+        start_year_by_percentile={
+            "P5": 1920,
+            "P25": 1934,
+            "P50": 1940,
+            "P75": 1975,
+            "P95": 2099,
+        },
+    )
+    assert indices["P5"] == 0
+    assert indices["P25"] == 1
+    assert indices["P50"] == 2
+    assert indices["P75"] == 4
+    assert indices["P95"] == 4

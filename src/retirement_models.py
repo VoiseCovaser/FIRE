@@ -1,11 +1,99 @@
 """Pure models for retirement taxation and pension-phase cashflows."""
 
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, Iterable, Mapping
 
 from src.tax_engine import (
     calculate_savings_tax_with_details,
     calculate_wealth_taxes_with_details,
 )
+
+
+DECUM_BACKTEST_PERCENTILES = ("P5", "P25", "P50", "P75", "P95")
+
+DECUM_BACKTEST_WINDOW_TEMPLATES: Dict[str, Dict[str, Any]] = {
+    "Choque temprano (estilo 1929)": {
+        "description": "Arranca en tramo histórico duro y mejora progresivamente.",
+        "anchor_year": 1929,
+        "offsets": {"P5": 0, "P25": 8, "P50": 16, "P75": 28, "P95": 40},
+    },
+    "Estanflación (estilo 1973)": {
+        "description": "Prioriza décadas con inflación alta y retorno real débil.",
+        "anchor_year": 1973,
+        "offsets": {"P5": 0, "P25": 5, "P50": 10, "P75": 16, "P95": 24},
+    },
+    "Ciclo mixto (estilo 2000)": {
+        "description": "Incluye burbuja tecnológica, crisis financiera y recuperación.",
+        "anchor_year": 2000,
+        "offsets": {"P5": -6, "P25": -2, "P50": 0, "P75": 5, "P95": 10},
+    },
+    "Régimen favorable (estilo 1982)": {
+        "description": "Sesgo hacia ciclos de expansión prolongada.",
+        "anchor_year": 1982,
+        "offsets": {"P5": -10, "P25": -4, "P50": 0, "P75": 8, "P95": 16},
+    },
+    "Puente pre-pensión estresado (7-9%)": {
+        "description": (
+            "Prioriza secuencias con choque temprano para tensionar el puente pre-pensión "
+            "y evaluar si la cartera soporta retiradas altas iniciales."
+        ),
+        "anchor_year": 1929,
+        "offsets": {"P5": 0, "P25": 3, "P50": 8, "P75": 15, "P95": 24},
+    },
+    "Recuperación tardía (drawdown prolongado)": {
+        "description": (
+            "Modela un arranque flojo y recuperación más lenta para probar resiliencia "
+            "en los primeros años de retirada."
+        ),
+        "anchor_year": 1966,
+        "offsets": {"P5": 0, "P25": 4, "P50": 10, "P75": 18, "P95": 28},
+    },
+}
+
+
+def _clamp_window_index(index: int, windows_total: int) -> int:
+    if windows_total <= 0:
+        return 0
+    return max(0, min(int(windows_total) - 1, int(index)))
+
+
+def _nearest_start_index(valid_start_years: Iterable[int], target_year: int) -> int:
+    years = [int(y) for y in valid_start_years]
+    if not years:
+        return 0
+    return int(min(range(len(years)), key=lambda i: abs(years[i] - int(target_year))))
+
+
+def build_template_window_indices(
+    valid_start_years: Iterable[int],
+    template_anchor_year: int,
+    shift_years: int = 0,
+    offsets: Optional[Mapping[str, int]] = None,
+) -> Dict[str, int]:
+    """Build per-percentile window indices from a template anchor and offsets."""
+    years = [int(y) for y in valid_start_years]
+    windows_total = len(years)
+    if windows_total == 0:
+        return {label: 0 for label in DECUM_BACKTEST_PERCENTILES}
+    base_idx = _nearest_start_index(years, int(template_anchor_year) + int(shift_years))
+    resolved_offsets = dict(offsets or {})
+    return {
+        label: _clamp_window_index(base_idx + int(resolved_offsets.get(label, 0)), windows_total)
+        for label in DECUM_BACKTEST_PERCENTILES
+    }
+
+
+def build_manual_window_indices(
+    valid_start_years: Iterable[int],
+    start_year_by_percentile: Mapping[str, int],
+) -> Dict[str, int]:
+    """Build per-percentile window indices from manually selected start years."""
+    years = [int(y) for y in valid_start_years]
+    if not years:
+        return {label: 0 for label in DECUM_BACKTEST_PERCENTILES}
+    return {
+        label: _nearest_start_index(years, int(start_year_by_percentile.get(label, years[0])))
+        for label in DECUM_BACKTEST_PERCENTILES
+    }
 
 
 def calculate_effective_public_pension_annual(
@@ -233,6 +321,7 @@ def build_decumulation_table_two_phase_net_withdrawal(
     property_sale_year: int = 0,
     property_sale_amount: float = 0.0,
     annual_extra_withdrawal_schedule: Optional[list] = None,
+    stage2_non_portfolio_income_annual: float = 0.0,
 ) -> Any:
     """Two-phase decumulation with direct net withdrawals from portfolio.
 
@@ -247,6 +336,14 @@ def build_decumulation_table_two_phase_net_withdrawal(
         age = fire_age + year - 1
         is_stage_2 = age >= int(phase2_start_age)
         tramo = "Post-pensión" if is_stage_2 else "Pre-pensión"
+        if is_stage_2:
+            implied_non_portfolio_income_today = (
+                max(0.0, float(stage2_non_portfolio_income_annual))
+                if float(stage2_non_portfolio_income_annual) > 0.0
+                else max(0.0, float(stage1_net_withdrawal_annual) - float(stage2_net_withdrawal_annual))
+            )
+        else:
+            implied_non_portfolio_income_today = 0.0
         base_today = (
             max(0.0, float(stage2_net_withdrawal_annual))
             if is_stage_2
@@ -288,6 +385,7 @@ def build_decumulation_table_two_phase_net_withdrawal(
                 "Edad": age,
                 "Tramo": tramo,
                 "Necesidad base cartera (€)": retirada_base,
+                "Ingreso no cartera implícito (€)": implied_non_portfolio_income_today * inflation_factor,
                 "Ingreso pensión pública (€)": 0.0,
                 "Ingreso plan privado (€)": 0.0,
                 "Otras rentas (€)": 0.0,
